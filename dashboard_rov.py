@@ -100,6 +100,21 @@ def insert_df_to_db(conn: sqlite3.Connection, df: pd.DataFrame) -> None:
     df_new = df[~df['row_hash'].isin(existing)]
     if df_new.empty:
         return
+    # Adapta colunas ao esquema existente. Obtem as colunas atuais da tabela
+    try:
+        cur = conn.execute('PRAGMA table_info(dados)')
+        tbl_cols = [row[1] for row in cur.fetchall()]
+    except Exception:
+        tbl_cols = None
+    if tbl_cols:
+        # Remove a coluna de hash se presente na lista de esquema
+        base_cols = [c for c in tbl_cols if c != 'row_hash']
+        # Garante que df_new possua todas as colunas da tabela, adicionando NaN onde necessário
+        for c in base_cols:
+            if c not in df_new.columns:
+                df_new[c] = pd.NA
+        # Mantém apenas as colunas que existem na tabela, exceto row_hash (será adicionada após)
+        df_new = df_new[[c for c in base_cols if c in df_new.columns] + ['row_hash']]
     # Insere no banco
     df_new.to_sql('dados', conn, if_exists='append', index=False)
 
