@@ -446,6 +446,133 @@ def load_data(csv: object) -> pd.DataFrame:
 
     return df
 
+# ---
+# Pós-processamento de DataFrame recuperado do banco
+#
+# Quando os dados são lidos de um banco SQLite, tipos como datas e números
+# são trazidos como texto. Esta função aplica as mesmas conversões de tipos e
+# engenharias de features utilizadas na função `load_data` para normalizar
+# o DataFrame carregado do banco de dados.
+def normalize_db_df(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Converte colunas de datas, números e categóricas para tipos adequados e
+    recria colunas derivadas como Data, Ano, Mês, etc.
+
+    :param df: DataFrame carregado a partir do banco.
+    :return: DataFrame normalizado.
+    """
+    if df is None or df.empty:
+        return df
+    df = df.copy()
+    # Datas
+    date_cols = [
+        "Data Coleta",
+        "Data Hora Inicio Operacao",
+        "Data Hora Final Operacao",
+        "Data Hora Saida Terminal",
+    ]
+    for c in date_cols:
+        if c in df.columns:
+            df[c] = pd.to_datetime(df[c], errors="coerce")
+    # Numéricos
+    numeric_candidates = [
+        "Passageiros",
+        "Distancia",
+        "Num Terminal Viagem",
+        "Catraca Inicial",
+        "Catraca Final",
+        "Catraca Inicial.1",
+        "Catraca Final.1",
+        "Total Fichas",
+        "Catraca Pendente",
+        "Ordem",
+        # Tarifas
+        "Quant Gratuidade",
+        "Quant Passagem",
+        "Quant Passagem Integracao",
+        "Quant Passe",
+        "Quant Passe Integracao",
+        "Quant Vale Transporte",
+        "Quant Vale Transporte Integracao",
+        "Quant Inteiras",
+    ]
+    for c in numeric_candidates:
+        if c in df.columns:
+            # substitui separadores para garantir que pd.to_numeric funcione
+            df[c] = (
+                df[c].astype(str)
+                .str.replace(".", "", regex=False)
+                .str.replace(",", ".", regex=False)
+            )
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    # Categóricos
+    cat_candidates = [
+        "Nome Linha",
+        "Codigo Externo Linha",
+        "Codigo Interno Linha",
+        "Numero Veiculo",
+        "Codigo Veiculo",
+        "Nome Garagem",
+        "Descricao Terminal",
+        "Periodo Operacao",
+        "Grupo Veiculo",
+        "Descricao Tipo Evento",
+        "Tipo Viagem",
+        "Viagem",
+        "Sub Linha",
+        "Cobrador/Operador",
+        "Nome Operadora",
+        "Orgao Gestor",
+        "Codigo Operadora",
+        "Matricula",
+    ]
+    for c in cat_candidates:
+        if c in df.columns:
+            df[c] = df[c].astype("category")
+    # Feature engineering leve
+    if "Data Coleta" in df.columns:
+        df["Data"] = df["Data Coleta"].dt.date
+        df["Ano"] = df["Data Coleta"].dt.year
+        df["Mes"] = df["Data Coleta"].dt.month
+        df["Dia"] = df["Data Coleta"].dt.day
+        try:
+            df["DiaSemana"] = df["Data Coleta"].dt.day_name(locale="pt_BR")
+        except Exception:
+            df["DiaSemana"] = df["Data Coleta"].dt.day_of_week
+        df["Hora"] = df["Data Coleta"].dt.hour
+    # Base para heatmap
+    candidates = [
+        "Data Hora Saida Terminal",
+        "Data Hora Inicio Operacao",
+        "Data Coleta",
+    ]
+    time_basis = None
+    max_nonnull = -1
+    for c in candidates:
+        if c in df.columns:
+            if not np.issubdtype(df[c].dtype, np.datetime64):
+                df[c] = pd.to_datetime(df[c], errors="coerce")
+            nonnull_count = df[c].notna().sum()
+            if nonnull_count > max_nonnull:
+                max_nonnull = nonnull_count
+                time_basis = c
+    if time_basis is not None and max_nonnull > 0:
+        df["Hora_Base"] = df[time_basis].dt.hour
+        df["DiaSemana_Base"] = df[time_basis].dt.dayofweek
+    else:
+        if "Hora" in df.columns and df["Hora"].notna().any():
+            df["Hora_Base"] = pd.to_numeric(df["Hora"], errors="coerce")
+            if "Data Coleta" in df.columns:
+                if not np.issubdtype(df["Data Coleta"].dtype, np.datetime64):
+                    df["Data Coleta"] = pd.to_datetime(df["Data Coleta"], errors="coerce")
+                df["DiaSemana_Base"] = df["Data Coleta"].dt.dayofweek
+            else:
+                df["DiaSemana_Base"] = np.nan
+        else:
+            df["Hora_Base"] = np.nan
+            df["DiaSemana_Base"] = np.nan
+    return df
+
 # ------------------------------
 # KM por linha com vigências
 # ------------------------------
@@ -610,8 +737,10 @@ if os.path.exists(DB_PATH):
     conn_tmp = sqlite3.connect(DB_PATH)
     df = pd.read_sql_query('SELECT * FROM dados', conn_tmp)
     conn_tmp.close()
+    # remove hash interno e normaliza tipos
     if 'row_hash' in df.columns:
         df = df.drop(columns=['row_hash'])
+    df = normalize_db_df(df)
 else:
     # Se por algum motivo o banco ainda não existir, inicialize-o como vazio
     df = pd.DataFrame()
@@ -628,11 +757,12 @@ if uploaded_file is not None:
         else:
             conn = sqlite3.connect(DB_PATH)
         insert_df_to_db(conn, df_new)
-        # Recarrega todos os dados da base para DataFrame principal
+        # Recarrega todos os dados da base para DataFrame principal e normaliza
         df = pd.read_sql_query('SELECT * FROM dados', conn)
         conn.close()
         if 'row_hash' in df.columns:
             df = df.drop(columns=['row_hash'])
+        df = normalize_db_df(df)
         st.sidebar.success("Importação concluída! Novas linhas foram adicionadas à base.")
 
 if df.empty:
