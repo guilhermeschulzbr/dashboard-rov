@@ -588,6 +588,75 @@ def normalize_db_df(df: pd.DataFrame) -> pd.DataFrame:
             df["DiaSemana_Base"] = np.nan
     return df
 
+# --
+# Cálculo de tendências para indicadores (7/14/28 dias)
+#
+# Esta função auxilia na geração de KPIs dinâmicos. Para um DataFrame
+# contendo uma coluna de datas e um agregador que produz o valor
+# do indicador desejado, calcula a diferença percentual entre o valor
+# observado no período mais recente e o período imediatamente anterior.
+# Gera segmentos "7d", "14d" e "28d" contendo setas indicando
+# tendência (↑ aumento, ↓ redução, → estável) e percentuais.
+# Caso não exista dados suficientes (menos de duas janelas do tamanho
+# especificado) ou o valor de comparação seja zero, retorna "Estável"
+# e indica que não deve ser aplicada cor de destaque.
+def compute_kpi_trend(df: pd.DataFrame, date_col: str, agg_func) -> tuple:
+    """
+    Calcula a tendência do indicador em múltiplas janelas temporais.
+
+    :param df: DataFrame contendo os dados filtrados.
+    :param date_col: nome da coluna que contém as datas.
+    :param agg_func: função que recebe um DataFrame e retorna o valor
+                     agregado desejado.
+    :return: tupla (delta_value, delta_str, delta_color) onde
+             delta_value representa a diferença bruta para 7 dias,
+             delta_str resume as tendências nas janelas 7/14/28 dias,
+             e delta_color define a cor do delta para st.metric.
+    """
+    if df is None or df.empty or date_col not in df.columns:
+        return None, "Estável", "off"
+    df_local = df.copy()
+    try:
+        df_local[date_col] = pd.to_datetime(df_local[date_col], errors="coerce")
+    except Exception:
+        return None, "Estável", "off"
+    end_date = df_local[date_col].max()
+    if pd.isna(end_date):
+        return None, "Estável", "off"
+    segments: list[str] = []
+    delta_value: float | None = None
+    total_days = (df_local[date_col].max() - df_local[date_col].min()).days
+    for period in (7, 14, 28):
+        if total_days < (period * 2 - 1):
+            continue
+        start_current = end_date - pd.Timedelta(days=period - 1)
+        start_previous = start_current - pd.Timedelta(days=period)
+        df_current = df_local[(df_local[date_col] >= start_current) & (df_local[date_col] <= end_date)]
+        df_previous = df_local[(df_local[date_col] >= start_previous) & (df_local[date_col] < start_current)]
+        try:
+            val_current = agg_func(df_current)
+            val_previous = agg_func(df_previous)
+        except Exception:
+            continue
+        if val_previous in (None, 0) or pd.isna(val_previous):
+            continue
+        diff = val_current - val_previous
+        pc = (diff / val_previous) * 100.0
+        if diff > 0:
+            arrow = "↑"
+        elif diff < 0:
+            arrow = "↓"
+        else:
+            arrow = "→"
+        segments.append(f"{period}d: {arrow}{abs(pc):.1f}%")
+        if period == 7:
+            delta_value = diff
+    if not segments or delta_value is None:
+        return None, "Estável", "off"
+    delta_color = "normal" if delta_value > 0 else ("inverse" if delta_value < 0 else "off")
+    delta_str = " | ".join(segments)
+    return delta_value, delta_str, delta_color
+
 # ------------------------------
 # KM por linha com vigências
 # ------------------------------
@@ -1032,33 +1101,66 @@ subsidio_pagante = st.sidebar.number_input("Subsídio por pagante (R$)", min_val
 # KPIs
 # ------------------------------
 kpi_cols = st.columns(6)
+date_col_trend = "Data Coleta" if "Data Coleta" in df_filtered.columns else ("Data" if "Data" in df_filtered.columns else None)
 
-# Passageiros total
+# Passageiros total com tendência
 total_pax = df_filtered["Passageiros"].sum() if "Passageiros" in df_filtered.columns else 0
-kpi_cols[0].metric("👥 Passageiros", fmt_int(total_pax))
+_, pax_delta_str, pax_color = compute_kpi_trend(
+    df_filtered,
+    date_col_trend,
+    lambda d: d["Passageiros"].sum() if "Passageiros" in d.columns else 0,
+)
+kpi_cols[0].metric("👥 Passageiros", fmt_int(total_pax), delta=pax_delta_str, delta_color=pax_color)
 
-# Viagens registradas
+# Viagens registradas com tendência
 viagens = len(df_filtered)
-kpi_cols[1].metric("🧭 Viagens registradas", fmt_int(viagens))
+_, viagens_delta_str, viagens_color = compute_kpi_trend(
+    df_filtered,
+    date_col_trend,
+    lambda d: len(d),
+)
+kpi_cols[1].metric("🧭 Viagens registradas", fmt_int(viagens), delta=viagens_delta_str, delta_color=viagens_color)
 
-# Distância total (usa distância configurada quando existir)
+# Distância total com tendência (usa distância configurada quando existir)
 if "Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any():
     dist_total = df_filtered["Distancia_cfg_km"].sum(min_count=1)
+    dist_col = "Distancia_cfg_km"
 else:
     dist_total = df_filtered["Distancia"].sum() if "Distancia" in df_filtered.columns else 0.0
-kpi_cols[2].metric("🛣️ Distância total (km)", fmt_float(dist_total, 1))
+    dist_col = "Distancia"
+_, dist_delta_str, dist_color = compute_kpi_trend(
+    df_filtered,
+    date_col_trend,
+    lambda d: d[dist_col].sum() if dist_col in d.columns else 0,
+)
+kpi_cols[2].metric("🛣️ Distância total (km)", fmt_float(dist_total, 1), delta=dist_delta_str, delta_color=dist_color)
 
-# Média pax/viagem
+# Média pax/viagem com tendência
 media_pax = (total_pax / viagens) if viagens > 0 else 0.0
-kpi_cols[3].metric("📈 Média pax/viagem", fmt_float(media_pax, 2))
+_, media_delta_str, media_color = compute_kpi_trend(
+    df_filtered,
+    date_col_trend,
+    lambda d: (d["Passageiros"].sum() / len(d)) if ("Passageiros" in d.columns and len(d) > 0) else 0,
+)
+kpi_cols[3].metric("📈 Média pax/viagem", fmt_float(media_pax, 2), delta=media_delta_str, delta_color=media_color)
 
-# Veículos (IDs distintos na base filtrada)
+# Veículos (IDs distintos na base filtrada) com tendência
 veics_ids = df_filtered["Numero Veiculo"].nunique() if "Numero Veiculo" in df_filtered.columns else 0
-kpi_cols[4].metric("🚌 Veículos (IDs distintos)", fmt_int(veics_ids))
+_, veic_delta_str, veic_color = compute_kpi_trend(
+    df_filtered,
+    date_col_trend,
+    lambda d: d["Numero Veiculo"].nunique() if "Numero Veiculo" in d.columns else 0,
+)
+kpi_cols[4].metric("🚌 Veículos (IDs distintos)", fmt_int(veics_ids), delta=veic_delta_str, delta_color=veic_color)
 
-# Linhas ativas
+# Linhas ativas com tendência
 linhas_ativas = df_filtered["Nome Linha"].nunique() if "Nome Linha" in df_filtered.columns else 0
-kpi_cols[5].metric("🧵 Linhas ativas", fmt_int(linhas_ativas))
+_, linhas_delta_str, linhas_color = compute_kpi_trend(
+    df_filtered,
+    date_col_trend,
+    lambda d: d["Nome Linha"].nunique() if "Nome Linha" in d.columns else 0,
+)
+kpi_cols[5].metric("🧵 Linhas ativas", fmt_int(linhas_ativas), delta=linhas_delta_str, delta_color=linhas_color)
 
 # --- Financeiro (com base nas colunas existentes) ---
 paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
