@@ -8,6 +8,7 @@
 import re
 import os
 import json
+import sqlite3  # para persistência em banco SQLite
 from typing import Optional
 import numpy as np
 import pandas as pd
@@ -50,6 +51,75 @@ st.set_page_config(page_title="Dashboard ROV - Operação", layout="wide")
 CONFIG_PATH_CATEG = os.path.join(os.getcwd(), "linhas_config.json")          # categorias (Urbana/Distrital)
 CONFIG_PATH_KM    = os.path.join(os.getcwd(), "linhas_km_config.json")       # vigências de km por linha
 CONFIG_PATH_VEIC  = os.path.join(os.getcwd(), "linhas_veic_config.json")     # vigências de veículos por linha
+
+# ------------------------------
+# Persistência de dados em banco SQLite
+# ------------------------------
+# Caminho para o arquivo de banco de dados utilizado para armazenar todos os registros importados.
+DB_PATH = os.path.join(os.getcwd(), "dados_ROV.db")
+# Caminho padrão para o CSV inicial utilizado para popular o banco na primeira execução.
+CSV_INIT_PATH = os.path.join(os.getcwd(), "dados_ROV.csv")
+
+def init_db(schema_columns):
+    """
+    Cria (se necessário) e retorna uma conexão para o banco SQLite. O esquema será
+    derivado da lista de colunas fornecida. Uma coluna adicional "row_hash" é criada
+    como chave primária para identificação única de cada linha.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    # Monta definição de colunas: todas as colunas como TEXT para simplicidade.
+    col_defs = ", ".join([f'"{c}" TEXT' for c in schema_columns] + ['row_hash TEXT PRIMARY KEY'])
+    conn.execute(f'CREATE TABLE IF NOT EXISTS dados ({col_defs});')
+    conn.commit()
+    return conn
+
+def compute_row_hash(df: pd.DataFrame) -> pd.Series:
+    """
+    Calcula um hash de cada linha do DataFrame para servir como chave primária.
+    Concatena valores como strings e usa hash estável fornecido pelo pandas.
+    """
+    # Assegura que todos os valores são strings para hashing consistente
+    df_str = df.astype(str)
+    return pd.util.hash_pandas_object(df_str, index=False).astype(str)
+
+def insert_df_to_db(conn: sqlite3.Connection, df: pd.DataFrame) -> None:
+    """
+    Insere registros no banco, ignorando aqueles que já existem (com base na coluna row_hash).
+    """
+    if df is None or df.empty:
+        return
+    # Calcula hash de linha e adiciona coluna
+    df = df.copy()
+    df['row_hash'] = compute_row_hash(df)
+    # Lê hashes existentes para evitar duplicidade
+    try:
+        existing = pd.read_sql_query('SELECT row_hash FROM dados', conn)['row_hash'].tolist()
+    except Exception:
+        existing = []
+    # Filtra apenas linhas novas
+    df_new = df[~df['row_hash'].isin(existing)]
+    if df_new.empty:
+        return
+    # Insere no banco
+    df_new.to_sql('dados', conn, if_exists='append', index=False)
+
+def ensure_db_initialized() -> None:
+    """
+    Garante que o banco exista. Se não existir, tenta ler o CSV inicial (CSV_INIT_PATH)
+    para criar o esquema e popular com dados. Caso o CSV inicial não esteja presente, a
+    inicialização ocorrerá na primeira importação pelo usuário.
+    """
+    if not os.path.exists(DB_PATH):
+        # Banco não existe ainda. Tenta utilizar CSV inicial.
+        if os.path.exists(CSV_INIT_PATH):
+            try:
+                df_init = pd.read_csv(CSV_INIT_PATH, sep=';', encoding='latin1')
+                conn = init_db(df_init.columns.tolist())
+                insert_df_to_db(conn, df_init)
+                conn.close()
+            except Exception:
+                # Falha ao inicializar com CSV inicial; banco será criado quando o usuário importar.
+                pass
 
 def load_json_config(path: str):
     try:
@@ -515,15 +585,31 @@ def apply_veic_vigente(df_in: pd.DataFrame, store: dict) -> pd.DataFrame:
 # ------------------------------
 # Entrada do arquivo
 # ------------------------------
+# Garante que o banco esteja inicializado antes de lidar com uploads
+ensure_db_initialized()
 st.sidebar.title("⚙️ Configurações")
 # Campo para upload de arquivo CSV pelo usuário
 uploaded_file = st.sidebar.file_uploader("Carregue o arquivo de dados (CSV ';')", type=["csv"])
-if uploaded_file is None:
+if uploaded_file is not None:
+    # Quando o usuário enviar um CSV, processamos e inserimos no banco.
+    with st.spinner("Carregando dados..."):
+        # carrega dados utilizando a rotina existente (para tratamento de tipos/datas)
+        df_new = load_data(uploaded_file)
+        # Inicializa o banco caso ainda não exista (baseado no esquema do CSV enviado)
+        if not os.path.exists(DB_PATH):
+            conn = init_db(df_new.columns.tolist())
+        else:
+            conn = sqlite3.connect(DB_PATH)
+        insert_df_to_db(conn, df_new)
+        # Lê todos os dados da base para DataFrame principal
+        df = pd.read_sql_query('SELECT * FROM dados', conn)
+        conn.close()
+        # remove coluna de hash interna
+        if 'row_hash' in df.columns:
+            df = df.drop(columns=['row_hash'])
+else:
     st.sidebar.info("Por favor, faça upload do arquivo CSV.")
     st.stop()
-
-with st.spinner("Carregando dados..."):
-    df = load_data(uploaded_file)
 
 st.title("📊 Dashboard Operacional ROV")
 st.caption("*Baseado exclusivamente nas colunas existentes do arquivo `dados_ROV.csv`*")
