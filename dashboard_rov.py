@@ -585,30 +585,58 @@ def apply_veic_vigente(df_in: pd.DataFrame, store: dict) -> pd.DataFrame:
 # ------------------------------
 # Entrada do arquivo
 # ------------------------------
-# Garante que o banco esteja inicializado antes de lidar com uploads
+
+# -----------------------------------------------------------------------------
+# Entrada e persistência de dados
+#
+# Primeiro, garanta que exista um banco SQLite contendo os dados históricos. Se
+# ainda não existir, a função `ensure_db_initialized` tentará criar o banco e
+# popular a tabela a partir do arquivo `dados_ROV.csv` (localizado no diretório
+# do projeto). Após a inicialização, os dados sempre serão lidos a partir do
+# banco.
 ensure_db_initialized()
+
 st.sidebar.title("⚙️ Configurações")
-# Campo para upload de arquivo CSV pelo usuário
-uploaded_file = st.sidebar.file_uploader("Carregue o arquivo de dados (CSV ';')", type=["csv"])
+
+# Campo para upload de arquivo CSV pelo usuário. Caso um arquivo seja enviado,
+# as linhas do CSV serão incorporadas à base existente. Linhas duplicadas são
+# identificadas pelo hash e ignoradas automaticamente.
+uploaded_file = st.sidebar.file_uploader(
+    "Carregue o arquivo de dados (CSV ';')", type=["csv"], key="file_uploader"
+)
+
+# Leia dados atuais do banco para construir o DataFrame principal
+if os.path.exists(DB_PATH):
+    conn_tmp = sqlite3.connect(DB_PATH)
+    df = pd.read_sql_query('SELECT * FROM dados', conn_tmp)
+    conn_tmp.close()
+    if 'row_hash' in df.columns:
+        df = df.drop(columns=['row_hash'])
+else:
+    # Se por algum motivo o banco ainda não existir, inicialize-o como vazio
+    df = pd.DataFrame()
+
+# Se o usuário fizer upload de um novo arquivo, processa o arquivo e atualiza o
+# banco. O DataFrame principal `df` é recarregado após a inserção.
 if uploaded_file is not None:
-    # Quando o usuário enviar um CSV, processamos e inserimos no banco.
     with st.spinner("Carregando dados..."):
         # carrega dados utilizando a rotina existente (para tratamento de tipos/datas)
         df_new = load_data(uploaded_file)
-        # Inicializa o banco caso ainda não exista (baseado no esquema do CSV enviado)
+        # Cria o banco caso ainda não exista
         if not os.path.exists(DB_PATH):
             conn = init_db(df_new.columns.tolist())
         else:
             conn = sqlite3.connect(DB_PATH)
         insert_df_to_db(conn, df_new)
-        # Lê todos os dados da base para DataFrame principal
+        # Recarrega todos os dados da base para DataFrame principal
         df = pd.read_sql_query('SELECT * FROM dados', conn)
         conn.close()
-        # remove coluna de hash interna
         if 'row_hash' in df.columns:
             df = df.drop(columns=['row_hash'])
-else:
-    st.sidebar.info("Por favor, faça upload do arquivo CSV.")
+        st.sidebar.success("Importação concluída! Novas linhas foram adicionadas à base.")
+
+if df.empty:
+    st.sidebar.info("Nenhum dado encontrado. Importe um arquivo CSV para iniciar a análise.")
     st.stop()
 
 st.title("📊 Dashboard Operacional ROV")
