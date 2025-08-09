@@ -230,14 +230,27 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
 # Carregamento de dados
 # ------------------------------
 @st.cache_data(show_spinner=False)
-def load_data(csv_path: str) -> pd.DataFrame:
-    """Carrega o CSV (sep=';'), normaliza tipos e deriva colunas úteis."""
+def load_data(csv: object) -> pd.DataFrame:
+    """Carrega o CSV (sep=';'), normaliza tipos e deriva colunas úteis.
+
+    Aceita tanto um caminho de arquivo (str) quanto um objeto semelhante a arquivo
+    retornado pelo st.file_uploader. Tenta diferentes codificações para abrir o
+    arquivo e lança um erro se nenhuma delas for válida.
+    """
     encodings = ["utf-8", "latin-1"]
     last_err = None
-    df = None
+    df: Optional[pd.DataFrame] = None
     for enc in encodings:
         try:
-            df = pd.read_csv(csv_path, sep=";", encoding=enc)
+            # Se for um objeto de arquivo, reposiciona o cursor no início antes de ler
+            if hasattr(csv, "read"):
+                try:
+                    csv.seek(0)
+                except Exception:
+                    pass
+                df = pd.read_csv(csv, sep=";", encoding=enc)
+            else:
+                df = pd.read_csv(csv, sep=";", encoding=enc)
             break
         except Exception as e:
             last_err = e
@@ -502,15 +515,15 @@ def apply_veic_vigente(df_in: pd.DataFrame, store: dict) -> pd.DataFrame:
 # ------------------------------
 # Entrada do arquivo
 # ------------------------------
-DEFAULT_PATH = os.path.join(os.getcwd(), "dados_ROV.csv")
 st.sidebar.title("⚙️ Configurações")
-csv_path = st.sidebar.text_input("Arquivo de dados (CSV ';')", DEFAULT_PATH)
-if not os.path.exists(csv_path):
-    st.error(f"Arquivo não encontrado: {csv_path}")
+# Campo para upload de arquivo CSV pelo usuário
+uploaded_file = st.sidebar.file_uploader("Carregue o arquivo de dados (CSV ';')", type=["csv"])
+if uploaded_file is None:
+    st.sidebar.info("Por favor, faça upload do arquivo CSV.")
     st.stop()
 
 with st.spinner("Carregando dados..."):
-    df = load_data(csv_path)
+    df = load_data(uploaded_file)
 
 st.title("📊 Dashboard Operacional ROV")
 st.caption("*Baseado exclusivamente nas colunas existentes do arquivo `dados_ROV.csv`*")
