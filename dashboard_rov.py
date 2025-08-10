@@ -2105,7 +2105,6 @@ def _ensure_datetime_columns(df):
         for c in date_cols:
             if c in df.columns:
                 try:
-                    # usa pandas dtype-aware; converte apenas se ainda não for datetime
                     if 'is_dt64' in globals():
                         if not is_dt64(df[c]):
                             df[c] = pd.to_datetime(df[c], errors="coerce", dayfirst=True)
