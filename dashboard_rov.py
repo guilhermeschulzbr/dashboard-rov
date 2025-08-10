@@ -285,19 +285,31 @@ def ensure_db_initialized() -> None:
             pass
         return
     # Caso seja persistência local (SQLite), criamos o arquivo de banco se não existir
-    if not os.path.exists(DB_PATH):
-        if os.path.exists(CSV_INIT_PATH):
+    # Para persistência local (SQLite), verifique se o arquivo existe e se a tabela 'dados' já está presente.
+    try:
+        table_exists = False
+        if os.path.exists(DB_PATH):
             try:
-                df_init = pd.read_csv(CSV_INIT_PATH, sep=';', encoding='latin1')
-                conn = init_db(df_init.columns.tolist())
-                insert_df_to_db(conn, df_init)
-                # se for engine (via init_db), não há método close; tenta fechar somente se for sqlite
+                conn_chk = sqlite3.connect(DB_PATH)
+                cur = conn_chk.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dados'")
+                table_exists = cur.fetchone() is not None
+                conn_chk.close()
+            except Exception:
+                table_exists = False
+        if not os.path.exists(DB_PATH) or not table_exists:
+            if os.path.exists(CSV_INIT_PATH):
                 try:
-                    conn.close()
+                    df_init = pd.read_csv(CSV_INIT_PATH, sep=';', encoding='latin1')
+                    conn = init_db(df_init.columns.tolist())
+                    insert_df_to_db(conn, df_init)
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
                 except Exception:
                     pass
-            except Exception:
-                pass
+    except Exception:
+        pass
 
 def load_json_config(path: str):
     try:
