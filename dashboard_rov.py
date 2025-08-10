@@ -2093,7 +2093,7 @@ def _sus_first(df, names):
 
 def _sus_detect_cols(df):
     # Preferir NOME do motorista
-    name_candidates = ["Nome Motorista","Motorista","Nome do Motorista","Nome Condutor","Condutor"]
+    name_candidates = [["Cobrador/Operador","Nome Motorista","Motorista","Nome do Motorista","Nome Condutor","Condutor"]]
     id_candidates   = ["Matricula","Matrícula","CPF Motorista","ID Motorista","Id Motorista"]
     driver_name = _sus_first(df, name_candidates)
     driver_id   = _sus_first(df, id_candidates)
@@ -2189,6 +2189,7 @@ def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
     out_cols = [drv] + ([lin] if lin else []) + ["viagens","pagantes","gratuidades","% grat/pag","z_rob","Sinal"]
     out = agg[out_cols].copy()
     if drv_name and drv_name in out.columns:
+        pass
         out.rename(columns={drv_name:"Motorista"}, inplace=True)
     else:
         out.rename(columns={drv:"Motorista"}, inplace=True)
@@ -2308,7 +2309,7 @@ def _render_suspeitas_panel(df):
         chart = tbl.head(topn).copy()
         chart["Nivel"] = chart["Sinal"].str.split().str[-1].map({"ALTA":"ALTA","MÉDIA":"MÉDIA","BAIXA":"BAIXA"}).fillna("BAIXA")
         chart["Cor"] = chart["Nivel"].map(level_color)
-        x = chart["Motorista"] if "Motorista" in chart.columns else chart.iloc[:,0]
+        x = chart["Motorista"] if "Motorista" in chart.columns else (chart.iloc[:,0] if chart.shape[1]>0 else [])
         fig = _go.Figure()
         fig.add_bar(x=x, y=chart["% grat/pag"], marker_color=chart["Cor"], name="% grat/pag")
         fig.update_layout(height=360, margin=dict(l=0,r=0,t=10,b=0), yaxis_title="% grat/pag", xaxis_title="Motorista")
