@@ -589,7 +589,14 @@ def load_data(csv: object) -> pd.DataFrame:
             df[c] = df[c].astype("category")
 
     # feature engineering leve
+    # Antes de extrair partes de data/hora, certifique-se de que
+    # a coluna "Data Coleta" está em formato datetime. Alguns bancos
+    # retornam essa coluna como string, o que causa erro no accessor `.dt`.
     if "Data Coleta" in df.columns:
+        # Converte para datetime se ainda não for datetimelike
+        if not np.issubdtype(df["Data Coleta"].dtype, np.datetime64):
+            df["Data Coleta"] = pd.to_datetime(df["Data Coleta"], errors="coerce")
+        # Depois de garantir o tipo correto, extraia componentes
         df["Data"] = df["Data Coleta"].dt.date
         df["Ano"] = df["Data Coleta"].dt.year
         df["Mes"] = df["Data Coleta"].dt.month
@@ -600,6 +607,7 @@ def load_data(csv: object) -> pd.DataFrame:
             df["DiaSemana"] = df["Data Coleta"].dt.day_of_week
         df["Hora"] = df["Data Coleta"].dt.hour
     else:
+        # Se a coluna não existir, crie coluna "Data" com valores ausentes
         df["Data"] = pd.NaT
 
     # base para heatmap (robusto)
