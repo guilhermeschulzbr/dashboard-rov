@@ -2069,3 +2069,189 @@ try:
 
 except Exception as _e:
     if _st: _st.warning(f"Falha ao renderizar 'Aproveitamento da Frota': {_e}")
+
+
+
+# === PAINEL DE SUSPEITAS: GRATUIDADES POR MOTORISTA ===
+import pandas as _pd
+import numpy as _np
+import re as _re
+try:
+    import streamlit as _st
+    import plotly.graph_objects as _go
+except Exception:
+    _st = None
+
+def _sus_first(df, names):
+    for n in names:
+        if n in df.columns:
+            return n
+    return None
+
+def _sus_detect_cols(df):
+    # Coluna de motorista (várias possibilidades)
+    driver_col = _sus_first(df, ["Motorista","Nome Motorista","Condutor","CPF Motorista","ID Motorista","Id Motorista","Matricula","Matrícula"])
+    # Coluna de linha (contexto para baseline por linha)
+    line_col   = _sus_first(df, ["Nome Linha","Linha"])
+
+    # Pagantes SEM integração
+    pay_whitelist = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
+    pay_present = [c for c in pay_whitelist if c in df.columns]
+    # Fallback: qualquer coluna tipo "Quant ..." com termos de pagantes, sem "grat" e sem "integr"
+    if not pay_present:
+        for c in df.columns:
+            if _pd.api.types.is_numeric_dtype(df[c]):
+                if _re.search(r"(?i)quant", c) and _re.search(r"(?i)(inteir|passag|passe|vale|vt)", c) and not _re.search(r"(?i)grat", c) and not _re.search(r"(?i)integr", c):
+                    pay_present.append(c)
+
+    # Gratuidades SEM integração
+    grat_cols = [c for c in df.columns if _re.search(r"(?i)grat", c) and not _re.search(r"(?i)integr", c)]
+
+    return driver_col, line_col, pay_present, grat_cols
+
+def _sus_robust_stats(s):
+    s = _pd.to_numeric(s, errors="coerce").dropna()
+    if s.empty:
+        return _np.nan, _np.nan, _np.nan, _np.nan
+    q1, q2, q3 = s.quantile([0.25, 0.5, 0.75])
+    iqr = q3 - q1 if (q3 - q1) != 0 else _np.nan
+    mad = (s - q2).abs().median()
+    madn = 1.4826 * mad if mad and mad > 0 else _np.nan
+    std = s.std(ddof=0)
+    return q2, iqr, madn, std
+
+def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
+    if df is None or df.empty:
+        return _pd.DataFrame(), "Sem dados após filtros."
+
+    drv, lin, pay_cols, grat_cols = _sus_detect_cols(df)
+
+    if drv is None:
+        return _pd.DataFrame(), "Coluna de motorista não encontrada."
+    if not pay_cols:
+        return _pd.DataFrame(), "Colunas de pagantes (sem integração) não localizadas."
+    if not grat_cols:
+        return _pd.DataFrame(), "Colunas de gratuidade (sem integração) não localizadas."
+
+    d = df.copy()
+    # Soma pagantes e gratuidades sem integração por registro
+    d["_pag"] = _pd.to_numeric(d[pay_cols].sum(axis=1), errors="coerce").fillna(0)
+    d["_grat"] = _pd.to_numeric(d[grat_cols].sum(axis=1), errors="coerce").fillna(0)
+    d["_one"] = 1
+
+    grp_keys = [drv] + ([lin] if lin else [])
+    agg = d.groupby(grp_keys, dropna=False).agg(
+        viagens=("_one","sum"),
+        pagantes=("_pag","sum"),
+        gratuidades=("_grat","sum"),
+    ).reset_index()
+
+    # Razão de interesse (gratuidades/pagantes)
+    agg["grat/pag"] = _np.where(agg["pagantes"]>0, agg["gratuidades"]/agg["pagantes"], _np.nan)
+
+    # Filtros mínimos para significância
+    agg = agg[(agg["viagens"] >= int(min_trips)) & (agg["pagantes"] >= float(min_pag))]
+    if agg.empty:
+        return agg, "Sem grupos com amostragem mínima (ajuste os limiares)."
+
+    # Baseline robusto por linha (mediana + MADN) ou global
+    if baseline == "linha" and lin:
+        base = agg.groupby(lin)["grat/pag"].apply(lambda s: _pd.Series(_sus_robust_stats(s), index=["mediana","iqr","madn","std"])).reset_index()
+        agg = agg.merge(base, on=lin, how="left")
+        agg["z_rob"] = (agg["grat/pag"] - agg["mediana"]) / agg["madn"].replace({0:_np.nan})
+    else:
+        med, iqr, madn, std = _sus_robust_stats(agg["grat/pag"])
+        agg["mediana"] = med; agg["iqr"] = iqr; agg["madn"] = madn; agg["std"] = std
+        agg["z_rob"] = (agg["grat/pag"] - med) / (madn if madn and madn>0 else _np.nan)
+
+    # Regras de suspeita (legenda/cores)
+    def level(z):
+        if _np.isnan(z): return "inconclusivo"
+        if z >= 3: return "ALTA"
+        if z >= 2: return "MÉDIA"
+        return "BAIXA"
+
+    def badge(level):
+        return {"ALTA":"🔴 ALTA", "MÉDIA":"🟠 MÉDIA", "BAIXA":"🟡 BAIXA", "inconclusivo":"⚪ Inconclusivo"}.get(level, "⚪ Inconclusivo")
+
+    agg["Suspeita"] = agg["z_rob"].apply(level)
+    agg["Sinal"] = agg["Suspeita"].apply(badge)
+    agg["% grat/pag"] = (agg["grat/pag"]*100).round(2)
+
+    # Ordena: primeiro ALTA, depois MÉDIA, BAIXA, inconclusivo, e por z_rob desc
+    order = _pd.CategoricalDtype(categories=["ALTA","MÉDIA","BAIXA","inconclusivo"], ordered=True)
+    agg["Suspeita"] = agg["Suspeita"].astype(order)
+    agg = agg.sort_values(["Suspeita","z_rob","% grat/pag"], ascending=[True, False, False])
+
+    # Seleção de colunas de saída
+    out_cols = []
+    out_cols.append(drv)
+    if lin: out_cols.append(lin)
+    out_cols += ["viagens","pagantes","gratuidades","% grat/pag","z_rob","Sinal"]
+    out = agg[out_cols].copy()
+    out.rename(columns={drv:"Motorista", (lin or "Linha"):"Linha"}, inplace=True, errors="ignore")
+    return out, None
+
+def _render_suspeitas_panel(df):
+    if _st is None:
+        return
+
+    _st.markdown("## 🚩 Possíveis desvios: gratuidades por motorista")
+    _st.caption(
+        "Este painel destaca **motoristas com maior proporção de gratuidades (sem integrações)** em relação aos **pagantes (sem integrações)**. "
+        "Usa baseline **robusto** (mediana + MAD) por **linha** para comparar comportamentos."
+    )
+
+    # Controles na sidebar
+    _st.sidebar.markdown("**Parâmetros de suspeição**")
+    min_trips = int(_st.sidebar.number_input("Mínimo de viagens por motorista", min_value=1, max_value=100, value=10, step=1))
+    min_pag = float(_st.sidebar.number_input("Mínimo de pagantes (sem integr.)", min_value=0.0, max_value=1e6, value=100.0, step=10.0))
+    baseline = _st.sidebar.selectbox("Baseline", ["Por linha (recomendado)","Global"], index=0)
+    baseline_key = "linha" if baseline.startswith("Por linha") else "global"
+    topn = int(_st.sidebar.number_input("Top N por suspeita", min_value=5, max_value=100, value=20, step=5))
+
+    tbl, warn = _sus_compute_table(df, min_trips=min_trips, min_pag=min_pag, baseline=baseline_key)
+    if warn:
+        _st.info(warn)
+        return
+    if tbl.empty:
+        _st.info("Sem registros após aplicar os parâmetros.")
+        return
+
+    # Tabela principal
+    _st.markdown("### Ranking por motorista")
+    _st.dataframe(tbl.head(topn), use_container_width=True)
+
+    # Chart com as maiores suspeitas (z_rob) – barras coloridas por nível
+    try:
+        level_color = {"ALTA":"#ef4444","MÉDIA":"#f97316","BAIXA":"#facc15","inconclusivo":"#9ca3af"}
+        chart = tbl.head(topn).copy()
+        # identifica nível pela palavra inicial do badge
+        chart["Nivel"] = chart["Sinal"].str.split().str[0].map({"🔴":"ALTA","🟠":"MÉDIA","🟡":"BAIXA","⚪":"inconclusivo"}).fillna("BAIXA")
+        chart["Cor"] = chart["Nivel"].map(level_color)
+        x = chart["Motorista"] if "Motorista" in chart.columns else chart.iloc[:,0]
+        fig = _go.Figure()
+        fig.add_bar(x=x, y=chart["% grat/pag"], marker_color=chart["Cor"], name="% grat/pag")
+        fig.update_layout(height=360, margin=dict(l=0,r=0,t=10,b=0), yaxis_title="% grat/pag", xaxis_title="Motorista")
+        _st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    except Exception as _e:
+        _st.warning(f"Falha ao desenhar gráfico: {_e}")
+
+    # Legenda/explicação das cores
+    _st.markdown(
+        "**Legenda:** 🔴 ALTA (z_rob ≥ 3) • 🟠 MÉDIA (2 ≤ z_rob < 3) • 🟡 BAIXA (0 ≤ z_rob < 2) • ⚪ Inconclusivo (amostra mínima não atendida ou variância muito baixa)."
+    )
+    _st.caption(
+        "⚠️ *Interpretação:* valores altos podem indicar **desvio** (ex.: liberação indevida). "
+        "Sempre considerar contexto (ex.: linhas escolares/hospitalares tendem a ter mais gratuidades legítimas)."
+    )
+
+# Renderização segura usando df filtrado
+try:
+    _df_base = df_filtered.copy() if 'df_filtered' in globals() else df.copy()
+    _render_suspeitas_panel(_df_base)
+except Exception as _e:
+    try:
+        _st.warning(f"Falha ao renderizar painel de suspeitas: {_e}")
+    except Exception:
+        pass
