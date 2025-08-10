@@ -1875,3 +1875,248 @@ if ai_cluster:
 
             except Exception as e:
                 st.error(f"Falha na clusterização: {e}")
+
+
+# ======================
+# Helpers: Consolidado por linha & Aproveitamento de Veículos
+# ======================
+import pandas as _pd
+import numpy as _np
+
+def _col_exists(df, name):
+    return (name in df.columns)
+
+def compute_receita_total_df(df):
+    """
+    Tenta calcular receita total linha a linha de forma resiliente.
+    Ordem de prioridade:
+      1) Se existir coluna 'Receita Total' ou 'Receita', usa-a.
+      2) Se existirem colunas de pagantes e tarifa média, estima receita tarifária.
+      3) Caso nada exista, retorna zeros.
+    Retorna uma Series alinhada ao df.
+    """
+    if _col_exists(df, "Receita Total"):
+        return df["Receita Total"].fillna(0)
+    if _col_exists(df, "Receita"):
+        return df["Receita"].fillna(0)
+
+    # Tentativa de estimar receita a partir de colunas de contagem de pagantes
+    paying_cols_all = [
+        "Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte",
+        "Quant Passagem Integracao","Quant Passe Integracao","Quant Vale Transporte Integracao"
+    ]
+    present = [c for c in paying_cols_all if c in df.columns]
+    if present:
+        total_pagantes = df[present].sum(axis=1).fillna(0)
+        # Tenta achar alguma tarifa média
+        tarifa_cols = [c for c in df.columns if "Tarifa" in c or "Valor Passagem" in c]
+        if tarifa_cols:
+            # média simples das tarifas numéricas disponíveis
+            tarifas = _pd.concat([_pd.to_numeric(df[c], errors="coerce") for c in tarifa_cols], axis=1)
+            tarifa_media = _pd.to_numeric(tarifas.mean(axis=1), errors="coerce").fillna(0)
+            receita_estimada = total_pagantes * tarifa_media
+        else:
+            # Sem tarifa: receita desconhecida -> zeros
+            receita_estimada = _pd.Series(0, index=df.index, dtype=float)
+        # Se houver coluna de subsídio por pagante, adiciona
+        subs_cols = [c for c in df.columns if "Subsídio" in c or "Subsidio" in c]
+        if subs_cols:
+            subs = _pd.to_numeric(df[subs_cols[0]], errors="coerce").fillna(0)
+            receita_estimada = receita_estimada.add(subs, fill_value=0)
+        return receita_estimada.fillna(0)
+
+    return _pd.Series(0, index=df.index, dtype=float)
+
+def tabela_consolidada_por_linha(df):
+    """
+    Gera a tabela consolidada por linha com:
+      - Receita total da linha
+      - Tot. Viagens
+      - Viagens p/ Veic (Tot. Viagens / Veículos distintos)
+    Retorna DataFrame agregando por 'Nome Linha' (ou 'Linha' se não existir).
+    """
+    if df.empty:
+        return _pd.DataFrame()
+
+    # Identifica coluna de linha
+    col_linha = "Nome Linha" if "Nome Linha" in df.columns else ("Linha" if "Linha" in df.columns else None)
+    if col_linha is None:
+        return _pd.DataFrame()
+
+    # Base para cálculos
+    df2 = df.copy()
+
+    # Veículo
+    col_veic = None
+    for cand in ["Numero Veiculo", "Nº Veiculo", "Veiculo", "Veículo"]:
+        if cand in df2.columns:
+            col_veic = cand
+            break
+
+    # Receita linha-a-linha (robusta)
+    df2["_receita_total"] = compute_receita_total_df(df2)
+
+    # Agregações
+    agg_dict = {
+        "Tot. Viagens": ("_dummy", "size"),
+        "R$ Receita Total": ("_receita_total", "sum"),
+    }
+    # cria coluna dummy para contar viagens
+    df2["_dummy"] = 1
+
+    # Agrega
+    grp = df2.groupby(col_linha, dropna=False)
+
+    # Veículos distintos
+    veic_dist = None
+    if col_veic is not None:
+        veic_dist = grp[col_veic].nunique().rename("Veic. Distintos")
+    else:
+        veic_dist = _pd.Series(1, index=grp.size().index, name="Veic. Distintos")
+
+    base = grp.agg(**agg_dict).reset_index()
+    base = base.merge(veic_dist.reset_index(), on=col_linha, how="left")
+
+    # Viagens por veículo
+    base["Viagens p/ Veic"] = base.apply(
+        lambda r: (r["Tot. Viagens"] / r["Veic. Distintos"]) if r["Veic. Distintos"] not in (0, None, _np.nan) else 0,
+        axis=1
+    )
+
+    # Ordena por receita desc
+    base = base.sort_values("R$ Receita Total", ascending=False)
+
+    # Formata números (mantém bruto; front pode formatar)
+    return base
+
+def indicadores_aproveitamento_veiculos(df):
+    """
+    KPIs por linha sobre aproveitamento de veículos:
+      - Horas totais trabalhadas
+      - Dias com operação
+      - Veic. médios em operação/dia
+      - Veic. configurados médios (se houver coluna de configuração)
+      - Horas/dia por veic. cfg
+      - Horas/dia por veic. oper. méd.
+      - Operação vs Config (ratio)
+
+    Requisitos mínimos de colunas:
+      - Linha: 'Nome Linha' ou 'Linha'
+      - Veículo: 'Numero Veiculo' (ou variantes)
+      - Início e fim: 'Data Hora Inicio Operacao', 'Data Hora Final Operacao' (ou variantes próximas)
+      - Data de referência diária: 'Data' ou 'Data Coleta'
+    """
+    if df.empty:
+        return _pd.DataFrame()
+
+    col_linha = "Nome Linha" if "Nome Linha" in df.columns else ("Linha" if "Linha" in df.columns else None)
+    if col_linha is None:
+        return _pd.DataFrame()
+
+    # Colunas candidatas
+    col_veic = None
+    for cand in ["Numero Veiculo", "Nº Veiculo", "Veiculo", "Veículo"]:
+        if cand in df.columns:
+            col_veic = cand
+            break
+
+    date_candidates = ["Data", "Data Coleta", "DataColeta"]
+    col_date = next((c for c in date_candidates if c in df.columns), None)
+
+    start_candidates = ["Data Hora Inicio Operacao", "Data Hora Início Operação", "Inicio Operacao", "Início Operação", "Hora Inicio", "DataHoraInicio"]
+    end_candidates   = ["Data Hora Final Operacao", "Data Hora Final Operação", "Fim Operacao", "Hora Final", "DataHoraFim"]
+
+    col_start = next((c for c in start_candidates if c in df.columns), None)
+    col_end   = next((c for c in end_candidates if c in df.columns), None)
+
+    if any(x is None for x in [col_linha, col_veic, col_date, col_start, col_end]):
+        return _pd.DataFrame()
+
+    df2 = df.copy()
+    # Converte datas
+    for c in [col_date, col_start, col_end]:
+        df2[c] = _pd.to_datetime(df2[c], errors="coerce")
+
+    # Duração em horas por registro
+    dur = (df2[col_end] - df2[col_start]).dt.total_seconds() / 3600.0
+    df2["_horas"] = _pd.to_numeric(dur, errors="coerce").fillna(0)
+
+    # Horas totais e dias ativos por linha
+    grp = df2.groupby(col_linha, dropna=False)
+    horas_totais = grp["_horas"].sum().rename("Horas totais")
+    dias_ativos  = grp[col_date].nunique().rename("Dias ativos")
+
+    # Veículos médios por dia: média de distintos por data dentro de cada linha
+    def _veic_medios(g):
+        by_day = g.groupby(col_date)[col_veic].nunique()
+        return by_day.mean()
+
+    veic_medios = df2.groupby(col_linha).apply(_veic_medios).rename("Veic. médios operação/dia")
+
+    # Veículos configurados médios (se houver coluna)
+    veic_cfg_col = next((c for c in df.columns if "Veiculo" in c and "cfg" in c.lower()), None)
+    if veic_cfg_col is None:
+        veic_cfg_col = next((c for c in df.columns if "Veículos_cfg" in c or "Veiculos_cfg" in c), None)
+
+    if veic_cfg_col:
+        veic_cfg_med = grp[veic_cfg_col].mean().rename("Veic. configurados (média)")
+    else:
+        # Se não existir, aproxima por máximo de veic. distintos/dia ao longo do período
+        veic_cfg_med = df2.groupby(col_linha).apply(lambda g: g.groupby(col_date)[col_veic].nunique().max()).rename("Veic. configurados (média)")
+
+    base = _pd.concat([horas_totais, dias_ativos, veic_medios, veic_cfg_med], axis=1).reset_index()
+
+    # Horas/dia média
+    base["Horas/dia (média)"] = base.apply(lambda r: (r["Horas totais"] / r["Dias ativos"]) if r["Dias ativos"] else 0, axis=1)
+
+    # Razões
+    base["Horas/dia por veic. cfg"] = base.apply(
+        lambda r: (r["Horas/dia (média)"] / r["Veic. configurados (média)"]) if r["Veic. configurados (média)"] else 0, axis=1
+    )
+    base["Horas/dia por veic. oper. méd."] = base.apply(
+        lambda r: (r["Horas/dia (média)"] / r["Veic. médios operação/dia"]) if r["Veic. médios operação/dia"] else 0, axis=1
+    )
+    base["Operação vs Config (ratio)"] = base.apply(
+        lambda r: (r["Veic. médios operação/dia"] / r["Veic. configurados (média)"]) if r["Veic. configurados (média)"] else 0, axis=1
+    )
+
+    # Ordena por maior aproveitamento
+    base = base.sort_values(["Operação vs Config (ratio)", "Horas/dia (média)"], ascending=False)
+    return base
+
+
+
+# ======================
+# Seções adicionadas (Consolidado por linha & Aproveitamento)
+# ======================
+try:
+    import streamlit as _st
+    _st.markdown("### 📊 Tabela consolidada por linha (com receita e viagens)")
+    df_base_consol = df_filtered.copy() if 'df_filtered' in globals() else df.copy()
+    tbl_consol = tabela_consolidada_por_linha(df_base_consol) if 'tabela_consolidada_por_linha' in globals() else _pd.DataFrame()
+    if tbl_consol.empty:
+        _st.info("Não foi possível gerar a tabela consolidada por linha (faltam colunas esperadas).")
+    else:
+        # Formatação leve
+        tbl_show = tbl_consol.copy()
+        for c in ["R$ Receita Total"]:
+            if c in tbl_show.columns:
+                tbl_show[c] = _pd.to_numeric(tbl_show[c], errors="coerce").fillna(0).map(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X","."))
+        _st.dataframe(tbl_show, use_container_width=True)
+
+    _st.markdown("### 🚚 Aproveitamento de veículos (por linha)")
+    tbl_aprov = indicadores_aproveitamento_veiculos(df_base_consol) if 'indicadores_aproveitamento_veiculos' in globals() else _pd.DataFrame()
+    if tbl_aprov.empty:
+        _st.info("Não foi possível gerar os indicadores de aproveitamento (verifique colunas de veículo e horários).")
+    else:
+        tbl_apr_show = tbl_aprov.copy()
+        # Formata razões em % onde fizer sentido
+        if "Operação vs Config (ratio)" in tbl_apr_show.columns:
+            tbl_apr_show["Operação vs Config (ratio)"] = (tbl_apr_show["Operação vs Config (ratio)"].astype(float) * 100.0).map(lambda v: f"{v:.1f}%")
+        _st.dataframe(tbl_apr_show, use_container_width=True)
+except Exception as _e:
+    # Mantém o app vivo mesmo se algo falhar nessa seção extra
+    try:
+        _st.warning(f"Falha ao renderizar seções extras: {_e}")
+    except Exception:
+        pass
