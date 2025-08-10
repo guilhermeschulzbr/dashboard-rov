@@ -1894,3 +1894,125 @@ if ai_cluster:
 
             except Exception as e:
                 st.error(f"Falha na clusterização: {e}")
+
+# ===================================================================
+# ### 🚚 Aproveitamento da Frota (KPIs + por linha)
+# ===================================================================
+import pandas as _pd
+import numpy as _np
+try:
+    import streamlit as _st
+except Exception:
+    _st = None
+
+def _first_present(df, names):
+    for n in names:
+        if n in df.columns:
+            return n
+    return None
+
+def _to_dt(series):
+    return _pd.to_datetime(series, errors="coerce")
+
+def _calc_aproveitamento(df):
+    """
+    Calcula KPIs gerais e tabela por linha de aproveitamento da frota.
+    Retorna (kpis_dict, tabela_por_linha DataFrame).
+    """
+    if df is None or df.empty:
+        return {}, _pd.DataFrame()
+
+    col_linha = _first_present(df, ["Nome Linha","Linha"])
+    col_veic  = _first_present(df, ["Numero Veiculo","Nº Veiculo","Veiculo","Veículo"])
+    col_data  = _first_present(df, ["Data","Data Coleta","DataColeta"])
+    col_ini   = _first_present(df, ["Data Hora Inicio Operacao","Data Hora Início Operação","Inicio Operacao","Início Operação","Hora Inicio","DataHoraInicio"])
+    col_fim   = _first_present(df, ["Data Hora Final Operacao","Data Hora Final Operação","Fim Operacao","Hora Final","DataHoraFim"])
+
+    if any(c is None for c in [col_linha, col_veic, col_data, col_ini, col_fim]):
+        return {"erro":"Colunas de linha/veículo/horários ausentes"}, _pd.DataFrame()
+
+    dff = df.copy()
+    dff[col_data] = _to_dt(dff[col_data])
+    dff[col_ini]  = _to_dt(dff[col_ini])
+    dff[col_fim]  = _to_dt(dff[col_fim])
+    dff["_horas"] = ((dff[col_fim] - dff[col_ini]).dt.total_seconds() / 3600.0).fillna(0)
+
+    # KPIs gerais (sobre df filtrado)
+    horas_totais = float(_pd.to_numeric(dff["_horas"], errors="coerce").sum(skipna=True))
+    dias_ativos  = int(dff[col_data].nunique())
+    veic_med_op  = float(dff.groupby(col_data)[col_veic].nunique().mean()) if dias_ativos else 0.0
+
+    # Veículos configurados médios
+    veic_cfg_col = _first_present(dff, [c for c in dff.columns if "cfg" in c.lower() and "veic" in c.lower()] + ["Veiculos_cfg","Veículos_cfg"])
+    if veic_cfg_col:
+        veic_cfg_med = float(dff.groupby(col_data)[veic_cfg_col].mean().mean())
+    else:
+        veic_cfg_med = float(dff.groupby(col_data)[col_veic].nunique().max()) if dias_ativos else 0.0
+
+    horas_dia_media = (horas_totais / dias_ativos) if dias_ativos else 0.0
+    horas_por_cfg   = (horas_dia_media / veic_cfg_med) if veic_cfg_med else 0.0
+    horas_por_oper  = (horas_dia_media / veic_med_op) if veic_med_op else 0.0
+    ratio_oper_cfg  = (veic_med_op / veic_cfg_med) if veic_cfg_med else 0.0
+
+    kpis = {
+        "horas_totais": horas_totais,
+        "dias_ativos": dias_ativos,
+        "veic_med_op": veic_med_op,
+        "veic_cfg_med": veic_cfg_med,
+        "horas_dia_media": horas_dia_media,
+        "horas_por_cfg": horas_por_cfg,
+        "horas_por_oper": horas_por_oper,
+        "ratio_oper_cfg": ratio_oper_cfg,
+    }
+
+    # ---- Tabela por linha ----
+    grp = dff.groupby(col_linha, dropna=False)
+    horas_totais_l = grp["_horas"].sum().rename("Horas totais")
+    dias_ativos_l  = grp[col_data].nunique().rename("Dias ativos")
+
+    def _vm(g):
+        return g.groupby(col_data)[col_veic].nunique().mean()
+    veic_med_op_l = dff.groupby(col_linha).apply(_vm).rename("Veic. médios operação/dia")
+
+    if veic_cfg_col:
+        veic_cfg_med_l = dff.groupby([col_linha, col_data])[veic_cfg_col].mean().groupby(level=0).mean().rename("Veic. configurados (média)")
+    else:
+        veic_cfg_med_l = dff.groupby(col_linha).apply(lambda g: g.groupby(col_data)[col_veic].nunique().max()).rename("Veic. configurados (média)")
+
+    base = _pd.concat([horas_totais_l, dias_ativos_l, veic_med_op_l, veic_cfg_med_l], axis=1).reset_index()
+    base["Horas/dia (média)"] = base.apply(lambda r: (r["Horas totais"]/r["Dias ativos"]) if r["Dias ativos"] else 0, axis=1)
+    base["Horas/dia por veic. cfg"] = base.apply(lambda r: (r["Horas/dia (média)"]/r["Veic. configurados (média)"]) if r["Veic. configurados (média)"] else 0, axis=1)
+    base["Horas/dia por veic. oper. méd."] = base.apply(lambda r: (r["Horas/dia (média)"]/r["Veic. médios operação/dia"]) if r["Veic. médios operação/dia"] else 0, axis=1)
+    base["Operação vs Config (ratio)"] = base.apply(lambda r: (r["Veic. médios operação/dia"]/r["Veic. configurados (média)"]) if r["Veic. configurados (média)"] else 0, axis=1)
+
+    base = base.sort_values(["Operação vs Config (ratio)", "Horas/dia (média)"], ascending=False)
+    return kpis, base
+
+# ---- Renderização na UI ----
+try:
+    _base_df = df_filtered.copy() if 'df_filtered' in globals() else df.copy()
+    if _st: _st.markdown("## 🚚 Aproveitamento da Frota")
+    _kpis, _tbl = _calc_aproveitamento(_base_df)
+
+    if _kpis.get("erro") and _st:
+        _st.info("Não foi possível calcular: " + _kpis["erro"])
+    elif _st:
+        c1,c2,c3 = _st.columns(3)
+        c1.metric("⏱️ Horas totais", f"{_kpis['horas_totais']:.1f} h")
+        c2.metric("🗓️ Dias ativos", f"{_kpis['dias_ativos']}")
+        c3.metric("🚌 Veic. médios oper./dia", f"{_kpis['veic_med_op']:.1f}")
+
+        c4,c5,c6 = _st.columns(3)
+        c4.metric("🚐 Veic. configurados (média)", f"{_kpis['veic_cfg_med']:.1f}")
+        c5.metric("⏳ Horas/dia por veic. cfg", f"{_kpis['horas_por_cfg']:.2f}")
+        perc = f"{_kpis['ratio_oper_cfg']*100:.1f}%" if _kpis['veic_cfg_med'] else "—"
+        c6.metric("📈 Operação vs Config", perc)
+
+        _st.markdown("### Por linha")
+        tbl_show = _tbl.copy()
+        if not tbl_show.empty and "Operação vs Config (ratio)" in tbl_show.columns:
+            tbl_show["Operação vs Config (ratio)"] = (tbl_show["Operação vs Config (ratio)"].astype(float)*100.0).map(lambda v: f"{v:.1f}%")
+        _st.dataframe(tbl_show, use_container_width=True)
+
+except Exception as _e:
+    if _st: _st.warning(f"Falha ao renderizar 'Aproveitamento da Frota': {{_e}}")
