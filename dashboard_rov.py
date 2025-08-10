@@ -1,4 +1,4 @@
-    # -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 # ============================================================
 # Dashboard Operacional ROV (apenas com dados do arquivo)
 # Execução: streamlit run dashboard_rov.py
@@ -8,24 +8,6 @@
 import re
 import os
 import json
-import sqlite3  # para persistência em banco SQLite
-#
-# Suporte para persistência em banco de dados externo
-#
-# Se o usuário definir um segredo `database_url` (ou `supabase_url`) via
-# Streamlit Secrets, este app utilizará esse URL de conexão para
-# armazenar e consultar dados em um banco PostgreSQL (por exemplo,
-# Supabase). Caso nenhum segredo seja fornecido, o app continuará
-# utilizando o banco SQLite local (`dados_ROV.db`).
-try:
-    import sqlalchemy
-    from sqlalchemy import text
-    _HAS_SQLALCHEMY = True
-except Exception:
-    # SQLAlchemy não é obrigatório quando usando apenas SQLite
-    sqlalchemy = None
-    text = None
-    _HAS_SQLALCHEMY = False
 from typing import Optional
 import numpy as np
 import pandas as pd
@@ -68,248 +50,6 @@ st.set_page_config(page_title="Dashboard ROV - Operação", layout="wide")
 CONFIG_PATH_CATEG = os.path.join(os.getcwd(), "linhas_config.json")          # categorias (Urbana/Distrital)
 CONFIG_PATH_KM    = os.path.join(os.getcwd(), "linhas_km_config.json")       # vigências de km por linha
 CONFIG_PATH_VEIC  = os.path.join(os.getcwd(), "linhas_veic_config.json")     # vigências de veículos por linha
-
-# ------------------------------
-# Persistência de dados em banco SQLite
-# ------------------------------
-# Caminho para o arquivo de banco de dados utilizado para armazenar todos os registros importados.
-DB_PATH = os.path.join(os.getcwd(), "dados_ROV.db")
-# Caminho padrão para o CSV inicial utilizado para popular o banco na primeira execução.
-CSV_INIT_PATH = os.path.join(os.getcwd(), "dados_ROV.csv")
-
-#
-# Determina e retorna um SQLAlchemy engine para um banco externo, se disponível.
-# Se o usuário definir um segredo `database_url` ou `supabase_url` nas
-# configurações de secrets do Streamlit, o app utilizará essa URL para
-# persistir os dados em um banco PostgreSQL. Caso contrário, a persistência
-# será feita em um banco SQLite local (`dados_ROV.db`). Quando SQLAlchemy
-# não estiver instalado, esta função retorna `None`.
-def get_external_engine():
-    """
-    Obtém um SQLAlchemy engine para conexão externa com base nos secrets.
-
-    :return: engine SQLAlchemy caso exista URL definida e SQLAlchemy esteja
-             disponível; caso contrário, retorna `None`.
-    """
-    try:
-        import streamlit as _st
-    except Exception:
-        return None
-    # Retorna None se SQLAlchemy não está disponível
-    if not _HAS_SQLALCHEMY:
-        return None
-    # Obtém URL do banco a partir de secrets
-    db_url = None
-    try:
-        db_url = _st.secrets.get("database_url") or _st.secrets.get("supabase_url")
-    except Exception:
-        db_url = None
-    if not db_url:
-        return None
-    try:
-        engine = sqlalchemy.create_engine(db_url)
-        return engine
-    except Exception:
-        return None
-
-def init_db(schema_columns):
-    """
-    Cria (se necessário) e retorna uma conexão ou engine de banco de dados.
-
-    Se um engine externo estiver disponível (obtido via `get_external_engine()`),
-    a tabela "dados" será criada nesse banco, utilizando SQLAlchemy. Caso
-    contrário, a persistência ocorre via SQLite, criando o arquivo
-    `dados_ROV.db` localmente.
-
-    :param schema_columns: lista de colunas para definição do esquema.
-    :return: engine SQLAlchemy para banco externo ou conexão SQLite.
-    """
-    engine = get_external_engine()
-    # Se engine externo disponível
-    if engine is not None:
-        # Define colunas com tipo textual e coluna row_hash
-        col_defs = ", ".join([f'"{c}" TEXT' for c in schema_columns] + ['row_hash TEXT PRIMARY KEY'])
-        try:
-            with engine.begin() as conn:
-                conn.execute(text(f'CREATE TABLE IF NOT EXISTS dados ({col_defs});'))
-            return engine
-        except Exception:
-            # Em caso de erro ao criar tabela no banco externo, retorna None para fallback
-            pass
-    # Fallback para SQLite local
-    conn = sqlite3.connect(DB_PATH)
-    col_defs = ", ".join([f'"{c}" TEXT' for c in schema_columns] + ['row_hash TEXT PRIMARY KEY'])
-    try:
-        conn.execute(f'CREATE TABLE IF NOT EXISTS dados ({col_defs});')
-        conn.commit()
-    except Exception:
-        pass
-    return conn
-
-def compute_row_hash(df: pd.DataFrame) -> pd.Series:
-    """
-    Calcula um hash de cada linha do DataFrame para servir como chave primária.
-    Concatena valores como strings e usa hash estável fornecido pelo pandas.
-    """
-    # Assegura que todos os valores são strings para hashing consistente
-    df_str = df.astype(str)
-    return pd.util.hash_pandas_object(df_str, index=False).astype(str)
-
-def insert_df_to_db(conn, df: pd.DataFrame) -> None:
-    """
-    Insere registros no banco, ignorando aqueles que já existem (com base na coluna row_hash).
-
-    Esta função aceita tanto uma conexão SQLite quanto um engine/connection
-    SQLAlchemy para bancos externos. A lógica de deduplicação permanece a mesma:
-    são lidos os hashes existentes e, em seguida, apenas as linhas novas são
-    gravadas no banco.
-
-    :param conn: conexão SQLite ou engine/connection SQLAlchemy
-    :param df: DataFrame a ser inserido
-    """
-    if df is None or df.empty:
-        return
-    # Calcula hash de linha e adiciona coluna
-    df = df.copy()
-    df['row_hash'] = compute_row_hash(df)
-
-    # Determina se estamos usando SQLAlchemy (banco externo) ou SQLite
-    using_external = False
-    engine = None
-    if _HAS_SQLALCHEMY:
-        try:
-            from sqlalchemy.engine import Engine, Connection
-            if isinstance(conn, (Engine, Connection)):
-                using_external = True
-                # Para Engine, podemos utilizar diretamente; para Connection, recuperamos engine
-                engine = conn if isinstance(conn, Engine) else conn.engine
-        except Exception:
-            using_external = False
-
-    if using_external and engine is not None:
-        # Acesso via SQLAlchemy
-        try:
-            with engine.begin() as ext_conn:
-                # Lê hashes existentes
-                try:
-                    existing_df = pd.read_sql('SELECT row_hash FROM dados', ext_conn)
-                    existing = existing_df['row_hash'].tolist()
-                except Exception:
-                    existing = []
-                # Filtra apenas linhas novas
-                df_new = df[~df['row_hash'].isin(existing)]
-                if df_new.empty:
-                    return
-                # Adapta colunas ao esquema existente
-                try:
-                    # Obtém colunas da tabela 'dados' no schema público
-                    result = ext_conn.execute(text("""
-                        SELECT column_name
-                        FROM information_schema.columns
-                        WHERE table_name = 'dados'
-                        AND table_schema = current_schema()
-                    """))
-                    tbl_cols = [row[0] for row in result]
-                except Exception:
-                    tbl_cols = None
-                if tbl_cols:
-                    base_cols = [c for c in tbl_cols if c != 'row_hash']
-                    for c in base_cols:
-                        if c not in df_new.columns:
-                            df_new[c] = pd.NA
-                    # Mantém apenas colunas existentes + row_hash
-                    keep_cols = [c for c in base_cols if c in df_new.columns] + ['row_hash']
-                    df_new = df_new[keep_cols]
-                # Insere no banco
-                df_new.to_sql('dados', engine, if_exists='append', index=False)
-        except Exception:
-            # Silencia erros para evitar quebra total do app
-            return
-    else:
-        # Operação com SQLite
-        try:
-            existing = pd.read_sql_query('SELECT row_hash FROM dados', conn)['row_hash'].tolist()
-        except Exception:
-            existing = []
-        df_new = df[~df['row_hash'].isin(existing)]
-        if df_new.empty:
-            return
-        # Adapta colunas ao esquema existente. Obtem as colunas atuais da tabela
-        tbl_cols = None
-        try:
-            cur = conn.execute('PRAGMA table_info(dados)')
-            tbl_cols = [row[1] for row in cur.fetchall()]
-        except Exception:
-            tbl_cols = None
-        if tbl_cols:
-            base_cols = [c for c in tbl_cols if c != 'row_hash']
-            for c in base_cols:
-                if c not in df_new.columns:
-                    df_new[c] = pd.NA
-            df_new = df_new[[c for c in base_cols if c in df_new.columns] + ['row_hash']]
-        try:
-            df_new.to_sql('dados', conn, if_exists='append', index=False)
-            conn.commit()
-        except Exception:
-            # Algumas implementações de conexão fazem commit automaticamente
-            pass
-
-def ensure_db_initialized() -> None:
-    """
-    Garante que o banco exista. Se não existir, tenta ler o CSV inicial (CSV_INIT_PATH)
-    para criar o esquema e popular com dados. Caso o CSV inicial não esteja presente, a
-    inicialização ocorrerá na primeira importação pelo usuário.
-    """
-    # Primeiro verifica se estamos utilizando banco externo
-    engine = get_external_engine()
-    if engine is not None:
-        # Verifica se a tabela já existe e possui registros
-        try:
-            with engine.begin() as conn:
-                # Verifica se existe a tabela 'dados' no schema atual
-                tbl_exists = conn.execute(text("""
-                    SELECT COUNT(*)
-                    FROM information_schema.tables
-                    WHERE table_name = 'dados'
-                    AND table_schema = current_schema()
-                """)).scalar()
-                if tbl_exists == 0:
-                    # se não existe, cria e popula com CSV inicial (se existir)
-                    if os.path.exists(CSV_INIT_PATH):
-                        df_init = pd.read_csv(CSV_INIT_PATH, sep=';', encoding='latin1')
-                        # cria estrutura
-                        init_db(df_init.columns.tolist())
-                        insert_df_to_db(engine, df_init)
-        except Exception:
-            # Silencia falhas de inicialização
-            pass
-        return
-    # Caso seja persistência local (SQLite), criamos o arquivo de banco se não existir
-    # Para persistência local (SQLite), verifique se o arquivo existe e se a tabela 'dados' já está presente.
-    try:
-        table_exists = False
-        if os.path.exists(DB_PATH):
-            try:
-                conn_chk = sqlite3.connect(DB_PATH)
-                cur = conn_chk.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dados'")
-                table_exists = cur.fetchone() is not None
-                conn_chk.close()
-            except Exception:
-                table_exists = False
-        if not os.path.exists(DB_PATH) or not table_exists:
-            if os.path.exists(CSV_INIT_PATH):
-                try:
-                    df_init = pd.read_csv(CSV_INIT_PATH, sep=';', encoding='latin1')
-                    conn = init_db(df_init.columns.tolist())
-                    insert_df_to_db(conn, df_init)
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-    except Exception:
-        pass
 
 def load_json_config(path: str):
     try:
@@ -589,14 +329,7 @@ def load_data(csv: object) -> pd.DataFrame:
             df[c] = df[c].astype("category")
 
     # feature engineering leve
-    # Antes de extrair partes de data/hora, certifique-se de que
-    # a coluna "Data Coleta" está em formato datetime. Alguns bancos
-    # retornam essa coluna como string, o que causa erro no accessor `.dt`.
     if "Data Coleta" in df.columns:
-        # Converte para datetime se ainda não for datetimelike
-        if not np.issubdtype(df["Data Coleta"].dtype, np.datetime64):
-            df["Data Coleta"] = pd.to_datetime(df["Data Coleta"], errors="coerce")
-        # Depois de garantir o tipo correto, extraia componentes
         df["Data"] = df["Data Coleta"].dt.date
         df["Ano"] = df["Data Coleta"].dt.year
         df["Mes"] = df["Data Coleta"].dt.month
@@ -607,7 +340,6 @@ def load_data(csv: object) -> pd.DataFrame:
             df["DiaSemana"] = df["Data Coleta"].dt.day_of_week
         df["Hora"] = df["Data Coleta"].dt.hour
     else:
-        # Se a coluna não existir, crie coluna "Data" com valores ausentes
         df["Data"] = pd.NaT
 
     # base para heatmap (robusto)
@@ -643,202 +375,6 @@ def load_data(csv: object) -> pd.DataFrame:
             df["DiaSemana_Base"] = np.nan
 
     return df
-
-# ---
-# Pós-processamento de DataFrame recuperado do banco
-#
-# Quando os dados são lidos de um banco SQLite, tipos como datas e números
-# são trazidos como texto. Esta função aplica as mesmas conversões de tipos e
-# engenharias de features utilizadas na função `load_data` para normalizar
-# o DataFrame carregado do banco de dados.
-def normalize_db_df(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Converte colunas de datas, números e categóricas para tipos adequados e
-    recria colunas derivadas como Data, Ano, Mês, etc.
-
-    :param df: DataFrame carregado a partir do banco.
-    :return: DataFrame normalizado.
-    """
-    if df is None or df.empty:
-        return df
-    df = df.copy()
-    # Datas
-    date_cols = [
-        "Data Coleta",
-        "Data Hora Inicio Operacao",
-        "Data Hora Final Operacao",
-        "Data Hora Saida Terminal",
-    ]
-    for c in date_cols:
-        if c in df.columns:
-            df[c] = pd.to_datetime(df[c], errors="coerce")
-    # Numéricos
-    numeric_candidates = [
-        "Passageiros",
-        "Distancia",
-        "Num Terminal Viagem",
-        "Catraca Inicial",
-        "Catraca Final",
-        "Catraca Inicial.1",
-        "Catraca Final.1",
-        "Total Fichas",
-        "Catraca Pendente",
-        "Ordem",
-        # Tarifas
-        "Quant Gratuidade",
-        "Quant Passagem",
-        "Quant Passagem Integracao",
-        "Quant Passe",
-        "Quant Passe Integracao",
-        "Quant Vale Transporte",
-        "Quant Vale Transporte Integracao",
-        "Quant Inteiras",
-    ]
-    for c in numeric_candidates:
-        if c in df.columns:
-            # substitui separadores para garantir que pd.to_numeric funcione
-            df[c] = (
-                df[c].astype(str)
-                .str.replace(".", "", regex=False)
-                .str.replace(",", ".", regex=False)
-            )
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-    # Categóricos
-    cat_candidates = [
-        "Nome Linha",
-        "Codigo Externo Linha",
-        "Codigo Interno Linha",
-        "Numero Veiculo",
-        "Codigo Veiculo",
-        "Nome Garagem",
-        "Descricao Terminal",
-        "Periodo Operacao",
-        "Grupo Veiculo",
-        "Descricao Tipo Evento",
-        "Tipo Viagem",
-        "Viagem",
-        "Sub Linha",
-        "Cobrador/Operador",
-        "Nome Operadora",
-        "Orgao Gestor",
-        "Codigo Operadora",
-        "Matricula",
-    ]
-    for c in cat_candidates:
-        if c in df.columns:
-            df[c] = df[c].astype("category")
-    # Feature engineering leve
-    if "Data Coleta" in df.columns:
-        df["Data"] = df["Data Coleta"].dt.date
-        df["Ano"] = df["Data Coleta"].dt.year
-        df["Mes"] = df["Data Coleta"].dt.month
-        df["Dia"] = df["Data Coleta"].dt.day
-        try:
-            df["DiaSemana"] = df["Data Coleta"].dt.day_name(locale="pt_BR")
-        except Exception:
-            df["DiaSemana"] = df["Data Coleta"].dt.day_of_week
-        df["Hora"] = df["Data Coleta"].dt.hour
-    # Base para heatmap
-    candidates = [
-        "Data Hora Saida Terminal",
-        "Data Hora Inicio Operacao",
-        "Data Coleta",
-    ]
-    time_basis = None
-    max_nonnull = -1
-    for c in candidates:
-        if c in df.columns:
-            if not np.issubdtype(df[c].dtype, np.datetime64):
-                df[c] = pd.to_datetime(df[c], errors="coerce")
-            nonnull_count = df[c].notna().sum()
-            if nonnull_count > max_nonnull:
-                max_nonnull = nonnull_count
-                time_basis = c
-    if time_basis is not None and max_nonnull > 0:
-        df["Hora_Base"] = df[time_basis].dt.hour
-        df["DiaSemana_Base"] = df[time_basis].dt.dayofweek
-    else:
-        if "Hora" in df.columns and df["Hora"].notna().any():
-            df["Hora_Base"] = pd.to_numeric(df["Hora"], errors="coerce")
-            if "Data Coleta" in df.columns:
-                if not np.issubdtype(df["Data Coleta"].dtype, np.datetime64):
-                    df["Data Coleta"] = pd.to_datetime(df["Data Coleta"], errors="coerce")
-                df["DiaSemana_Base"] = df["Data Coleta"].dt.dayofweek
-            else:
-                df["DiaSemana_Base"] = np.nan
-        else:
-            df["Hora_Base"] = np.nan
-            df["DiaSemana_Base"] = np.nan
-    return df
-
-# --
-# Cálculo de tendências para indicadores (7/14/28 dias)
-#
-# Esta função auxilia na geração de KPIs dinâmicos. Para um DataFrame
-# contendo uma coluna de datas e um agregador que produz o valor
-# do indicador desejado, calcula a diferença percentual entre o valor
-# observado no período mais recente e o período imediatamente anterior.
-# Gera segmentos "7d", "14d" e "28d" contendo setas indicando
-# tendência (↑ aumento, ↓ redução, → estável) e percentuais.
-# Caso não exista dados suficientes (menos de duas janelas do tamanho
-# especificado) ou o valor de comparação seja zero, retorna "Estável"
-# e indica que não deve ser aplicada cor de destaque.
-def compute_kpi_trend(df: pd.DataFrame, date_col: str, agg_func) -> tuple:
-    """
-    Calcula a tendência do indicador em múltiplas janelas temporais.
-
-    :param df: DataFrame contendo os dados filtrados.
-    :param date_col: nome da coluna que contém as datas.
-    :param agg_func: função que recebe um DataFrame e retorna o valor
-                     agregado desejado.
-    :return: tupla (delta_value, delta_str, delta_color) onde
-             delta_value representa a diferença bruta para 7 dias,
-             delta_str resume as tendências nas janelas 7/14/28 dias,
-             e delta_color define a cor do delta para st.metric.
-    """
-    if df is None or df.empty or date_col not in df.columns:
-        return None, "Estável", "off"
-    df_local = df.copy()
-    try:
-        df_local[date_col] = pd.to_datetime(df_local[date_col], errors="coerce")
-    except Exception:
-        return None, "Estável", "off"
-    end_date = df_local[date_col].max()
-    if pd.isna(end_date):
-        return None, "Estável", "off"
-    segments: list[str] = []
-    delta_value: float | None = None
-    total_days = (df_local[date_col].max() - df_local[date_col].min()).days
-    for period in (7, 14, 28):
-        if total_days < (period * 2 - 1):
-            continue
-        start_current = end_date - pd.Timedelta(days=period - 1)
-        start_previous = start_current - pd.Timedelta(days=period)
-        df_current = df_local[(df_local[date_col] >= start_current) & (df_local[date_col] <= end_date)]
-        df_previous = df_local[(df_local[date_col] >= start_previous) & (df_local[date_col] < start_current)]
-        try:
-            val_current = agg_func(df_current)
-            val_previous = agg_func(df_previous)
-        except Exception:
-            continue
-        if val_previous in (None, 0) or pd.isna(val_previous):
-            continue
-        diff = val_current - val_previous
-        pc = (diff / val_previous) * 100.0
-        if diff > 0:
-            arrow = "↑"
-        elif diff < 0:
-            arrow = "↓"
-        else:
-            arrow = "→"
-        segments.append(f"{period}d: {arrow}{abs(pc):.1f}%")
-        if period == 7:
-            delta_value = diff
-    if not segments or delta_value is None:
-        return None, "Estável", "off"
-    delta_color = "normal" if delta_value > 0 else ("inverse" if delta_value < 0 else "off")
-    delta_str = " | ".join(segments)
-    return delta_value, delta_str, delta_color
 
 # ------------------------------
 # KM por linha com vigências
@@ -979,92 +515,15 @@ def apply_veic_vigente(df_in: pd.DataFrame, store: dict) -> pd.DataFrame:
 # ------------------------------
 # Entrada do arquivo
 # ------------------------------
-
-# -----------------------------------------------------------------------------
-# Entrada e persistência de dados
-#
-# Primeiro, garanta que exista um banco SQLite contendo os dados históricos. Se
-# ainda não existir, a função `ensure_db_initialized` tentará criar o banco e
-# popular a tabela a partir do arquivo `dados_ROV.csv` (localizado no diretório
-# do projeto). Após a inicialização, os dados sempre serão lidos a partir do
-# banco.
-ensure_db_initialized()
-
 st.sidebar.title("⚙️ Configurações")
-
-# Campo para upload de arquivo CSV pelo usuário. Caso um arquivo seja enviado,
-# as linhas do CSV serão incorporadas à base existente. Linhas duplicadas são
-# identificadas pelo hash e ignoradas automaticamente.
-uploaded_file = st.sidebar.file_uploader(
-    "Carregue o arquivo de dados (CSV ';')", type=["csv"], key="file_uploader"
-)
-
-# Leia dados atuais do banco para construir o DataFrame principal
-df = pd.DataFrame()
-engine_ext = get_external_engine()
-if engine_ext is not None:
-    # Conexão externa: lê do banco via SQLAlchemy
-    try:
-        with engine_ext.begin() as conn_tmp:
-            df = pd.read_sql('SELECT * FROM dados', conn_tmp)
-    except Exception:
-        df = pd.DataFrame()
-    # remove hash interno se presente e normaliza
-    if not df.empty and 'row_hash' in df.columns:
-        df = df.drop(columns=['row_hash'])
-    df = normalize_db_df(df)
-else:
-    # Persistência local: usa SQLite
-    if os.path.exists(DB_PATH):
-        conn_tmp = sqlite3.connect(DB_PATH)
-        df = pd.read_sql_query('SELECT * FROM dados', conn_tmp)
-        conn_tmp.close()
-        if 'row_hash' in df.columns:
-            df = df.drop(columns=['row_hash'])
-        df = normalize_db_df(df)
-    else:
-        df = pd.DataFrame()
-
-# Se o usuário fizer upload de um novo arquivo, processa o arquivo e atualiza o
-# banco. O DataFrame principal `df` é recarregado após a inserção.
-if uploaded_file is not None:
-    with st.spinner("Carregando dados..."):
-        # carrega dados utilizando a rotina existente (para tratamento de tipos/datas)
-        df_new = load_data(uploaded_file)
-        # Decide se estamos usando banco externo ou SQLite
-        engine_ext = get_external_engine()
-        if engine_ext is not None:
-            # Cria tabela se não existir e insere dados
-            conn_or_engine = init_db(df_new.columns.tolist())
-            insert_df_to_db(conn_or_engine, df_new)
-            # Recarrega dados do banco
-            try:
-                with engine_ext.begin() as conn_tmp:
-                    df = pd.read_sql('SELECT * FROM dados', conn_tmp)
-            except Exception:
-                df = pd.DataFrame()
-        else:
-            # SQLite: cria banco se necessário
-            if not os.path.exists(DB_PATH):
-                conn = init_db(df_new.columns.tolist())
-            else:
-                conn = sqlite3.connect(DB_PATH)
-            insert_df_to_db(conn, df_new)
-            df = pd.read_sql_query('SELECT * FROM dados', conn)
-            # fecha conexão SQLite
-            try:
-                conn.close()
-            except Exception:
-                pass
-        # remove hash interno se presente e normaliza
-        if not df.empty and 'row_hash' in df.columns:
-            df = df.drop(columns=['row_hash'])
-        df = normalize_db_df(df)
-        st.sidebar.success("Importação concluída! Novas linhas foram adicionadas à base.")
-
-if df.empty:
-    st.sidebar.info("Nenhum dado encontrado. Importe um arquivo CSV para iniciar a análise.")
+# Campo para upload de arquivo CSV pelo usuário
+uploaded_file = st.sidebar.file_uploader("Carregue o arquivo de dados (CSV ';')", type=["csv"])
+if uploaded_file is None:
+    st.sidebar.info("Por favor, faça upload do arquivo CSV.")
     st.stop()
+
+with st.spinner("Carregando dados..."):
+    df = load_data(uploaded_file)
 
 st.title("📊 Dashboard Operacional ROV")
 st.caption("*Baseado exclusivamente nas colunas existentes do arquivo `dados_ROV.csv`*")
@@ -1314,66 +773,33 @@ subsidio_pagante = st.sidebar.number_input("Subsídio por pagante (R$)", min_val
 # KPIs
 # ------------------------------
 kpi_cols = st.columns(6)
-date_col_trend = "Data Coleta" if "Data Coleta" in df_filtered.columns else ("Data" if "Data" in df_filtered.columns else None)
 
-# Passageiros total com tendência
+# Passageiros total
 total_pax = df_filtered["Passageiros"].sum() if "Passageiros" in df_filtered.columns else 0
-_, pax_delta_str, pax_color = compute_kpi_trend(
-    df_filtered,
-    date_col_trend,
-    lambda d: d["Passageiros"].sum() if "Passageiros" in d.columns else 0,
-)
-kpi_cols[0].metric("👥 Passageiros", fmt_int(total_pax), delta=pax_delta_str, delta_color=pax_color)
+kpi_cols[0].metric("👥 Passageiros", fmt_int(total_pax))
 
-# Viagens registradas com tendência
+# Viagens registradas
 viagens = len(df_filtered)
-_, viagens_delta_str, viagens_color = compute_kpi_trend(
-    df_filtered,
-    date_col_trend,
-    lambda d: len(d),
-)
-kpi_cols[1].metric("🧭 Viagens registradas", fmt_int(viagens), delta=viagens_delta_str, delta_color=viagens_color)
+kpi_cols[1].metric("🧭 Viagens registradas", fmt_int(viagens))
 
-# Distância total com tendência (usa distância configurada quando existir)
+# Distância total (usa distância configurada quando existir)
 if "Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any():
     dist_total = df_filtered["Distancia_cfg_km"].sum(min_count=1)
-    dist_col = "Distancia_cfg_km"
 else:
     dist_total = df_filtered["Distancia"].sum() if "Distancia" in df_filtered.columns else 0.0
-    dist_col = "Distancia"
-_, dist_delta_str, dist_color = compute_kpi_trend(
-    df_filtered,
-    date_col_trend,
-    lambda d: d[dist_col].sum() if dist_col in d.columns else 0,
-)
-kpi_cols[2].metric("🛣️ Distância total (km)", fmt_float(dist_total, 1), delta=dist_delta_str, delta_color=dist_color)
+kpi_cols[2].metric("🛣️ Distância total (km)", fmt_float(dist_total, 1))
 
-# Média pax/viagem com tendência
+# Média pax/viagem
 media_pax = (total_pax / viagens) if viagens > 0 else 0.0
-_, media_delta_str, media_color = compute_kpi_trend(
-    df_filtered,
-    date_col_trend,
-    lambda d: (d["Passageiros"].sum() / len(d)) if ("Passageiros" in d.columns and len(d) > 0) else 0,
-)
-kpi_cols[3].metric("📈 Média pax/viagem", fmt_float(media_pax, 2), delta=media_delta_str, delta_color=media_color)
+kpi_cols[3].metric("📈 Média pax/viagem", fmt_float(media_pax, 2))
 
-# Veículos (IDs distintos na base filtrada) com tendência
+# Veículos (IDs distintos na base filtrada)
 veics_ids = df_filtered["Numero Veiculo"].nunique() if "Numero Veiculo" in df_filtered.columns else 0
-_, veic_delta_str, veic_color = compute_kpi_trend(
-    df_filtered,
-    date_col_trend,
-    lambda d: d["Numero Veiculo"].nunique() if "Numero Veiculo" in d.columns else 0,
-)
-kpi_cols[4].metric("🚌 Veículos (IDs distintos)", fmt_int(veics_ids), delta=veic_delta_str, delta_color=veic_color)
+kpi_cols[4].metric("🚌 Veículos (IDs distintos)", fmt_int(veics_ids))
 
-# Linhas ativas com tendência
+# Linhas ativas
 linhas_ativas = df_filtered["Nome Linha"].nunique() if "Nome Linha" in df_filtered.columns else 0
-_, linhas_delta_str, linhas_color = compute_kpi_trend(
-    df_filtered,
-    date_col_trend,
-    lambda d: d["Nome Linha"].nunique() if "Nome Linha" in d.columns else 0,
-)
-kpi_cols[5].metric("🧵 Linhas ativas", fmt_int(linhas_ativas), delta=linhas_delta_str, delta_color=linhas_color)
+kpi_cols[5].metric("🧵 Linhas ativas", fmt_int(linhas_ativas))
 
 # --- Financeiro (com base nas colunas existentes) ---
 paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
