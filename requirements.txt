@@ -8,3 +8,5 @@ scikit-learn
 prophet
 openpyxl
 xlsxwriter
+sqlalchemy
+psycopg2-binary
