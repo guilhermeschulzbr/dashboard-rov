@@ -669,6 +669,16 @@ df = apply_veic_vigente(df, veic_store)
 st.sidebar.header("Filtros")
 df_filtered = df.copy()
 
+# Renderiza o novo topo de KPIs (2x3)
+try:
+    _render_top_kpis(df_filtered if 'df_filtered' in globals() else df)
+except Exception as _e:
+    try:
+        st.warning(f"Falha ao renderizar KPIs do topo: {_e}")
+    except Exception:
+        pass
+
+
 # Período
 if "Data Coleta" in df_filtered.columns and df_filtered["Data Coleta"].notna().any():
     min_d = pd.to_datetime(df_filtered["Data Coleta"].min()).date()
@@ -2069,3 +2079,217 @@ try:
 
 except Exception as _e:
     if _st: _st.warning(f"Falha ao renderizar 'Aproveitamento da Frota': {_e}")
+
+
+
+# === TOP KPIs (colored cards + sparklines) ====================================
+import re as _re
+import plotly.graph_objects as _go
+import pandas as _pd
+import numpy as _np
+try:
+    import streamlit as _st
+except Exception:
+    _st = None
+
+def _kpi_fmt_int(v):
+    try:
+        return f"{int(round(float(v))):,}".replace(",", ".")
+    except Exception:
+        return "0"
+
+def _kpi_fmt_float(v, dec=2):
+    try:
+        s = f"{float(v):,.{dec}f}"
+        return s.replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return "0,00"
+
+def _kpi_fmt_currency(v, dec=2):
+    try:
+        s = f"R$ {float(v):,.{dec}f}"
+        return s.replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return "R$ 0,00"
+
+def _kpi_to_dt(series):
+    return _pd.to_datetime(series, errors="coerce")
+
+def _kpi_first(df, names):
+    for n in names:
+        if n in df.columns:
+            return n
+    return None
+
+def _kpi_daily(df):
+    d = df.copy()
+    date_col = _kpi_first(d, ["Data","Data Coleta","DataColeta"]) or "Data"
+    d[date_col] = _kpi_to_dt(d[date_col])
+    d = d.dropna(subset=[date_col])
+    d["__date"] = d[date_col].dt.date
+    return d, "__date"
+
+def _kpi_sum_cols(df, cols):
+    present = [c for c in cols if c in df.columns]
+    if not present: return _pd.Series(0, index=df.index)
+    return _pd.to_numeric(df[present], errors="coerce").fillna(0).sum(axis=1)
+
+def _kpi_pagantes(df):
+    paying = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
+    integ  = ["Quant Passagem Integracao","Quant Passe Integracao","Quant Vale Transporte Integracao",
+              "Quant Passagem Integração","Quant Passe Integração","Quant Vale Transporte Integração"]
+    regex  = [c for c in df.columns if _pd.api.types.is_numeric_dtype(df[c])
+              and _re.search(r"(?i)quant.*(inteir|passag|passe|vale|vt|integra)", c)
+              and not _re.search(r"(?i)grat", c)]
+    cols, seen = [], set()
+    for c in paying + integ + regex:
+        if c in df.columns and c not in seen:
+            cols.append(c); seen.add(c)
+    if not cols: return _pd.Series(0, index=df.index)
+    return _pd.to_numeric(df[cols], errors="coerce").fillna(0).sum(axis=1)
+
+def _kpi_gratuitos(df):
+    grat = [c for c in df.columns if _re.search(r"(?i)grat", c)]
+    if not grat: return _pd.Series(0, index=df.index)
+    return _pd.to_numeric(df[grat], errors="coerce").fillna(0).sum(axis=1)
+
+def _kpi_receita_total(df):
+    if "Receita Total" in df.columns:
+        return _pd.to_numeric(df["Receita Total"], errors="coerce").fillna(0)
+    if "Receita" in df.columns:
+        return _pd.to_numeric(df["Receita"], errors="coerce").fillna(0)
+    pag = _kpi_pagantes(df)
+    tarifa_cols = [c for c in df.columns if _re.search(r"(?i)tarifa|valor\s*pass", c)]
+    if tarifa_cols:
+        tarifas = _pd.concat([_pd.to_numeric(df[c], errors="coerce") for c in tarifa_cols], axis=1).mean(axis=1).fillna(0)
+    else:
+        tarifas = 0
+    subs_cols = [c for c in df.columns if _re.search(r"(?i)subs[ií]dio|subsidio", c)]
+    subs = _pd.to_numeric(df[subs_cols[0]], errors="coerce").fillna(0) if subs_cols else 0
+    return (pag * tarifas) + subs
+
+def _kpi_dist(df):
+    km_cols = [c for c in df.columns if _re.search(r"(?i)\bkm\b|quil[oô]metr", c)]
+    if not km_cols: return _pd.Series(0, index=df.index)
+    return _pd.to_numeric(df[km_cols[0]], errors="coerce").fillna(0)
+
+def _kpi_compute(df):
+    d, dcol = _kpi_daily(df)
+    # Séries diárias
+    pag_day = _kpi_pagantes(d).groupby(d[dcol]).sum(min_count=1)
+    pax_day = (pag_day + _kpi_gratuitos(d).groupby(d[dcol]).sum(min_count=1))
+    trips_day = d.groupby(d[dcol]).size()
+    dist_day = _kpi_dist(d).groupby(d[dcol]).sum(min_count=1)
+    rec_day = _kpi_receita_total(d).groupby(d[dcol]).sum(min_count=1)
+
+    total_pax = float(pax_day.sum())
+    total_trips = int(trips_day.sum())
+    total_dist = float(dist_day.sum())
+    rec_total = float(rec_day.sum())
+    pax_per_trip = (total_pax/total_trips) if total_trips else 0.0
+    ipk_pag = (float(pag_day.sum())/total_dist) if total_dist else 0.0
+
+    veic_col = _kpi_first(df, ["Numero Veiculo","Nº Veiculo","Veiculo","Veículo"])
+    linha_col = _kpi_first(df, ["Nome Linha","Linha"])
+    veic_ids = df[veic_col].nunique() if veic_col else 0
+    linhas_ativas = df[linha_col].nunique() if linha_col else 0
+
+    oper_day = d.groupby(d[dcol])[veic_col].nunique() if veic_col else _pd.Series(0, index=pax_day.index)
+    cfg_col = _kpi_first(df, [c for c in df.columns if "cfg" in c.lower() and "veic" in c.lower()] + ["Veiculos_cfg","Veículos_cfg"])
+    if cfg_col:
+        cfg_day = d.groupby(d[dcol])[cfg_col].mean()
+    else:
+        if linha_col and veic_col:
+            per_line_daily = d.groupby([linha_col, d[dcol]])[veic_col].nunique()
+            per_line_peak = per_line_daily.groupby(level=0).max()
+            cap = float(per_line_peak.sum()) if not per_line_peak.empty else 0.0
+        else:
+            cap = float(oper_day.max() if len(oper_day) else 0.0)
+        cfg_day = _pd.Series(cap, index=oper_day.index)
+    ratio_day = (oper_day / cfg_day.replace(0, _np.nan)).clip(upper=1.2)
+
+    return {
+        "pax": (total_pax, pax_day),
+        "trips": (total_trips, trips_day),
+        "dist": (total_dist, dist_day),
+        "pax_trip": (pax_per_trip, (pax_day / trips_day.replace(0,_np.nan))),
+        "rec": (rec_total, rec_day),
+        "ipk_pag": (ipk_pag, (pag_day / dist_day.replace(0,_np.nan))),
+        "veic_ids": (veic_ids, oper_day),
+        "linhas": (linhas_ativas, None),
+        "ratio_op_cfg": (float((oper_day.mean() / cfg_day.mean()) if cfg_day.mean() else 0.0), ratio_day),
+    }
+
+def _kpi_delta(series, window=7, mode="window"):
+    s = series.dropna() if series is not None else _pd.Series(dtype=float)
+    if s.empty: return 0.0
+    if mode=="previous":
+        if len(s) < window*2: mode="window"
+        last = float(s.iloc[-window:].mean())
+        prev = float(s.iloc[-2*window:-window].mean()) if len(s) >= window*2 else float(s.mean())
+    else:
+        last = float(s.tail(window).mean())
+        prev = float(s.mean())
+    if prev == 0 or _np.isnan(prev): return 0.0
+    return (last - prev) / prev
+
+def _kpi_spark(series):
+    fig = _go.Figure()
+    if series is not None and not series.dropna().empty:
+        s = series.dropna()
+        fig.add_scatter(x=s.index, y=s.values, mode="lines")
+    fig.update_layout(height=54, margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+    fig.update_xaxes(visible=False); fig.update_yaxes(visible=False)
+    return fig
+
+def _render_top_kpis(df):
+    if _st is None: return
+    series = _kpi_compute(df)
+
+    _st.sidebar.subheader("Aparência dos KPIs")
+    show_sparks = _st.sidebar.checkbox("Mostrar sparklines", True)
+    compare_opt = _st.sidebar.selectbox("Comparar vs", ["Últimos 7 dias","Últimos 14 dias","Últimos 28 dias","Período anterior"], index=0)
+    if compare_opt.startswith("Últimos"):
+        window = int(compare_opt.split()[1]); mode="window"
+    else:
+        window = 7; mode="previous"
+
+    palette = {"op":"#2563eb","fin":"#16a34a","frota":"#7c3aed","mot":"#f59e0b"}
+
+    _st.markdown(\"\"\"\n    <style>\n    .kpi-card{border-radius:16px;padding:14px 16px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);box-shadow:0 6px 16px rgba(0,0,0,0.24)}\n    .kpi-title{font-weight:700;opacity:.9;font-size:0.95rem}\n    .kpi-value{font-size:1.8rem;margin-top:4px;margin-bottom:4px}\n    .kpi-delta{font-size:0.85rem;opacity:.85}\n    </style>\n    \"\"\", unsafe_allow_html=True)
+
+    def card(col, title, value, color_key, series_x=None, fmt="int", suffix=""):
+        with col:
+            _st.markdown(f"<div class='kpi-title'>{title}</div>", unsafe_allow_html=True)
+            if fmt=="int": val_fmt = _kpi_fmt_int(value)
+            elif fmt=="float": val_fmt = _kpi_fmt_float(value, 2)
+            elif fmt=="currency": val_fmt = _kpi_fmt_currency(value, 2)
+            else: val_fmt = str(value)
+            _st.markdown(f"<div class='kpi-value' style='color:{palette[color_key]}'>{val_fmt}{suffix}</div>", unsafe_allow_html=True)
+            if series_x is not None:
+                delta = _kpi_delta(series_x, window, mode)
+                badge = "🟢" if delta >= 0.02 else ("🟡" if delta > -0.02 else "🔴")
+                _st.markdown(f"<div class='kpi-delta'>{badge} Δ {delta*100:.1f}%</div>", unsafe_allow_html=True)
+            if show_sparks and series_x is not None:
+                _st.plotly_chart(_kpi_spark(series_x), use_container_width=True, config={\"displayModeBar\": False})
+
+    # Row 1
+    r1 = _st.columns(3)
+    card(r1[0], "🧍 Passageiros", series["pax"][0], "op", series["pax"][1], "int")
+    card(r1[1], "🧾 Viagens registradas", series["trips"][0], "op", series["trips"][1], "int")
+    card(r1[2], "👥 Média pax/viagem", series["pax_trip"][0], "op", series["pax_trip"][1], "float")
+
+    # Row 2
+    r2 = _st.columns(3)
+    card(r2[0], "💰 Receita total", series["rec"][0], "fin", series["rec"][1], "currency")
+    card(r2[1], "📈 IPK pagantes (pax/km)", series["ipk_pag"][0], "fin", series["ipk_pag"][1], "float")
+    # Operação vs Config (badge principal com %)
+    ratio_val, ratio_series = series["ratio_op_cfg"]
+    with r2[2]:
+        pct = f"{max(0.0, min(1.2, float(ratio_val)))*100:.1f}%"
+        badge = "🟢" if ratio_val >= 0.9 else ("🟡" if ratio_val >= 0.75 else "🔴")
+        _st.markdown(f"<div class='kpi-title'>🚌 Operação vs Config</div>", unsafe_allow_html=True)
+        _st.markdown(f"<div class='kpi-value' style='color:{palette['frota']}'>{badge} {pct}</div>", unsafe_allow_html=True)
+        if show_sparks and ratio_series is not None:
+            _st.plotly_chart(_kpi_spark(ratio_series), use_container_width=True, config={\"displayModeBar\": False})
+# === END TOP KPIs =============================================================
