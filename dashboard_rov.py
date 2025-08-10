@@ -1914,11 +1914,17 @@ def _first_present(df, names):
 def _to_dt(series):
     return _pd.to_datetime(series, errors="coerce")
 
+
 def _calc_aproveitamento(df):
     """
     Calcula KPIs gerais e tabela por linha de aproveitamento da frota.
+    ATENÇÃO: KPIs agora são calculados em nível de SISTEMA por dia,
+    evitando médias de médias que distorcem valores.
     Retorna (kpis_dict, tabela_por_linha DataFrame).
     """
+    import pandas as _pd
+    import numpy as _np
+
     if df is None or df.empty:
         return {}, _pd.DataFrame()
 
@@ -1937,22 +1943,38 @@ def _calc_aproveitamento(df):
     dff[col_fim]  = _to_dt(dff[col_fim])
     dff["_horas"] = ((dff[col_fim] - dff[col_ini]).dt.total_seconds() / 3600.0).fillna(0)
 
-    # KPIs gerais (sobre df filtrado)
-    horas_totais = float(_pd.to_numeric(dff["_horas"], errors="coerce").sum(skipna=True))
-    dias_ativos  = int(dff[col_data].nunique())
-    veic_med_op  = float(dff.groupby(col_data)[col_veic].nunique().mean()) if dias_ativos else 0.0
+    # ----- Séries diárias (nível sistema) -----
+    # Horas totais por dia (somando todas as viagens/veículos)
+    daily_hours = dff.groupby(col_data)["_horas"].sum(min_count=1)
+    dias_ativos = int(daily_hours.index.nunique())
 
-    # Veículos configurados médios
+    # Veículos operando por dia (distintos)
+    daily_oper = dff.groupby(col_data)[col_veic].nunique()
+
+    # Veículos configurados por dia:
+    #  - Se houver coluna de config, somamos a config por linha ao dia e tiramos média entre dias
+    #  - Senão, aproximamos pela "capacidade" do sistema como soma do pico (máximo diário) por linha
     veic_cfg_col = _first_present(dff, [c for c in dff.columns if "cfg" in c.lower() and "veic" in c.lower()] + ["Veiculos_cfg","Veículos_cfg"])
-    if veic_cfg_col:
-        veic_cfg_med = float(dff.groupby(col_data)[veic_cfg_col].mean().mean())
-    else:
-        veic_cfg_med = float(dff.groupby(col_data)[col_veic].nunique().max()) if dias_ativos else 0.0
 
-    horas_dia_media = (horas_totais / dias_ativos) if dias_ativos else 0.0
-    horas_por_cfg   = (horas_dia_media / veic_cfg_med) if veic_cfg_med else 0.0
-    horas_por_oper  = (horas_dia_media / veic_med_op) if veic_med_op else 0.0
-    ratio_oper_cfg  = (veic_med_op / veic_cfg_med) if veic_cfg_med else 0.0
+    if veic_cfg_col:
+        daily_cfg = dff.groupby([col_data, col_linha])[veic_cfg_col].mean().groupby(level=0).sum(min_count=1)
+        veic_cfg_med = float(daily_cfg.mean()) if not daily_cfg.empty else 0.0
+    else:
+        per_line_daily = dff.groupby([col_linha, col_data])[col_veic].nunique()
+        per_line_peak  = per_line_daily.groupby(level=0).max()  # pico por linha no período
+        cfg_total_cap  = float(per_line_peak.sum()) if not per_line_peak.empty else 0.0
+        veic_cfg_med   = cfg_total_cap  # aproxima como capacidade estável
+        daily_cfg      = _pd.Series(cfg_total_cap, index=daily_hours.index) if dias_ativos else _pd.Series(dtype=float)
+
+    # KPIs em nível de sistema (médias por dia)
+    horas_totais     = float(daily_hours.sum())                         # total no período
+    horas_dia_media  = float(daily_hours.mean()) if dias_ativos else 0  # média diária
+    veic_med_op      = float(daily_oper.mean()) if dias_ativos else 0
+    horas_por_cfg    = (horas_dia_media / veic_cfg_med) if veic_cfg_med else 0.0
+    horas_por_oper   = (horas_dia_media / veic_med_op) if veic_med_op else 0.0
+    ratio_oper_cfg   = (veic_med_op / veic_cfg_med) if veic_cfg_med else 0.0
+    # Limita ratio em 120% para evitar outliers visuais por ruído de dados
+    ratio_oper_cfg   = float(min(ratio_oper_cfg, 1.2))
 
     kpis = {
         "horas_totais": horas_totais,
@@ -1965,7 +1987,7 @@ def _calc_aproveitamento(df):
         "ratio_oper_cfg": ratio_oper_cfg,
     }
 
-    # ---- Tabela por linha ----
+    # ---- Tabela por linha (mantém lógica robusta) ----
     grp = dff.groupby(col_linha, dropna=False)
     horas_totais_l = grp["_horas"].sum().rename("Horas totais")
     dias_ativos_l  = grp[col_data].nunique().rename("Dias ativos")
@@ -1991,6 +2013,28 @@ def _calc_aproveitamento(df):
 # ---- Renderização na UI ----
 try:
     _base_df = df_filtered.copy() if 'df_filtered' in globals() else df.copy()
+
+    # Helpers de formatação
+    def _fmt_h(v, dec=1):
+        try:
+            return f"{v:,.{dec}f} h".replace(",", "X").replace(".", ",").replace("X", ".")
+        except Exception:
+            return "—"
+
+    def _fmt_hhmm(v):
+        try:
+            total_min = int(round(float(v) * 60))
+            hh, mm = divmod(total_min, 60)
+            return f"{hh:02d}:{mm:02d} h"
+        except Exception:
+            return "—"
+
+    def _fmt_pct(v):
+        try:
+            return f"{(float(v)*100):.1f}%"
+        except Exception:
+            return "—"
+
     if _st: _st.markdown("## 🚚 Aproveitamento da Frota")
     _kpis, _tbl = _calc_aproveitamento(_base_df)
 
@@ -1998,21 +2042,30 @@ try:
         _st.info("Não foi possível calcular: " + _kpis["erro"])
     elif _st:
         c1,c2,c3 = _st.columns(3)
-        c1.metric("⏱️ Horas totais", f"{_kpis['horas_totais']:.1f} h")
+        c1.metric("⏱️ Horas totais", _fmt_h(_kpis['horas_totais'], 1), _fmt_hhmm(_kpis['horas_dia_media']))
         c2.metric("🗓️ Dias ativos", f"{_kpis['dias_ativos']}")
         c3.metric("🚌 Veic. médios oper./dia", f"{_kpis['veic_med_op']:.1f}")
 
         c4,c5,c6 = _st.columns(3)
         c4.metric("🚐 Veic. configurados (média)", f"{_kpis['veic_cfg_med']:.1f}")
         c5.metric("⏳ Horas/dia por veic. cfg", f"{_kpis['horas_por_cfg']:.2f}")
-        perc = f"{_kpis['ratio_oper_cfg']*100:.1f}%" if _kpis['veic_cfg_med'] else "—"
-        c6.metric("📈 Operação vs Config", perc)
+        # Badge de status para Operação vs Config
+        ratio = _kpis['ratio_oper_cfg']
+        badge = "🟢" if ratio >= 0.9 else ("🟡" if ratio >= 0.75 else "🔴")
+        c6.metric(f"{badge} Operação vs Config", _fmt_pct(ratio))
+
+        _st.caption("• Delta em 'Horas totais' mostra média diária (formato HH:MM). Cores: 🟢 ≥ 90%, 🟡 75–89%, 🔴 < 75%.")
 
         _st.markdown("### Por linha")
         tbl_show = _tbl.copy()
         if not tbl_show.empty and "Operação vs Config (ratio)" in tbl_show.columns:
-            tbl_show["Operação vs Config (ratio)"] = (tbl_show["Operação vs Config (ratio)"].astype(float)*100.0).map(lambda v: f"{v:.1f}%")
+            tbl_show["Operação vs Config (ratio)"] = (tbl_show["Operação vs Config (ratio)"].astype(float).clip(0,1.2))*100.0
+            tbl_show["Operação vs Config (ratio)"] = tbl_show["Operação vs Config (ratio)"].map(lambda v: f"{v:.1f}%")
+        # Formata horas
+        for col in ["Horas totais","Horas/dia (média)","Horas/dia por veic. cfg","Horas/dia por veic. oper. méd."]:
+            if col in tbl_show.columns:
+                tbl_show[col] = tbl_show[col].astype(float).map(lambda v: _fmt_h(v, 2))
         _st.dataframe(tbl_show, use_container_width=True)
 
 except Exception as _e:
-    if _st: _st.warning(f"Falha ao renderizar 'Aproveitamento da Frota': {{_e}}")
+    if _st: _st.warning(f"Falha ao renderizar 'Aproveitamento da Frota': {_e}")
