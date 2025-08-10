@@ -9,7 +9,7 @@ import re
 import os
 import json
 from typing import Optional
-import numpy as npå
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -34,6 +34,7 @@ except Exception:
 
 try:
     from prophet import Prophet  # pip install prophet
+from pandas.api.types import is_datetime64_any_dtype as is_dt64
     _HAS_PROPHET = True
 except Exception:
     _HAS_PROPHET = False
@@ -2091,3 +2092,36 @@ def _render_top_kpis(df):
         if show_sparks and ratio_series is not None:
             _st.plotly_chart(_kpi_spark(ratio_series), use_container_width=True, config={"displayModeBar": False})
 # === END TOP KPIs =============================================================
+
+
+# ========= HOTFIX: normalização robusta de datas =========
+def _ensure_datetime_columns(df):
+    try:
+        date_cols = [
+            "Data", "Data Coleta", "DataColeta",
+            "Data Hora Inicio Operacao", "Data Hora Início Operação", "Inicio Operacao", "Início Operação", "Hora Inicio", "DataHoraInicio",
+            "Data Hora Final Operacao", "Data Hora Final Operação", "Fim Operacao", "Hora Final", "DataHoraFim"
+        ]
+        for c in date_cols:
+            if c in df.columns:
+                try:
+                    # usa pandas dtype-aware; converte apenas se ainda não for datetime
+                    if 'is_dt64' in globals():
+                        if not is_dt64(df[c]):
+                            df[c] = pd.to_datetime(df[c], errors="coerce", dayfirst=True)
+                    else:
+                        df[c] = pd.to_datetime(df[c], errors="coerce", dayfirst=True)
+                except Exception:
+                    df[c] = pd.to_datetime(df[c], errors="coerce", dayfirst=True)
+    except Exception:
+        pass
+    return df
+
+try:
+    if 'df' in globals() and isinstance(df, pd.DataFrame):
+        df = _ensure_datetime_columns(df)
+    if 'df_filtered' in globals() and isinstance(df_filtered, pd.DataFrame):
+        df_filtered = _ensure_datetime_columns(df_filtered)
+except Exception:
+    pass
+# ========= FIM HOTFIX =========
