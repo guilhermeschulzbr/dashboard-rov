@@ -2075,6 +2075,7 @@ except Exception as _e:
 
 
 
+
 # === PAINEL DE SUSPEITAS: GRATUIDADES POR MOTORISTA ===
 import pandas as _pd
 import numpy as _np
@@ -2087,18 +2088,28 @@ except Exception:
 
 def _sus_first(df, names):
     for n in names:
-        if n in df.columns:
+        if isinstance(n, str) and n in df.columns:
             return n
     return None
 
+def _force_str(col):
+    if isinstance(col, list) or isinstance(col, tuple):
+        return col[0] if col else None
+    return col
+
 def _sus_detect_cols(df):
     # Preferir NOME do motorista
-    name_candidates = [["Cobrador/Operador","Nome Motorista","Motorista","Nome do Motorista","Nome Condutor","Condutor"]]
+    name_candidates = ["Cobrador/Operador","Nome Motorista","Motorista","Nome do Motorista","Nome Condutor","Condutor"]
     id_candidates   = ["Matricula","Matrícula","CPF Motorista","ID Motorista","Id Motorista"]
     driver_name = _sus_first(df, name_candidates)
     driver_id   = _sus_first(df, id_candidates)
-    driver_col  = driver_name or driver_id  # sempre prioriza nome
+    driver_col  = driver_name or driver_id  # string esperada
+    driver_col  = _force_str(driver_col)
+    driver_name = _force_str(driver_name)
+    driver_id   = _force_str(driver_id)
+
     line_col    = _sus_first(df, ["Nome Linha","Linha"])
+    line_col    = _force_str(line_col)
 
     # Pagantes SEM integração
     pay_whitelist = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
@@ -2129,7 +2140,7 @@ def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
 
     drv, drv_name, drv_id, lin, pay_cols, grat_cols = _sus_detect_cols(df)
 
-    if drv is None:
+    if not isinstance(drv, str) or drv not in df.columns:
         return _pd.DataFrame(), "Coluna de motorista (nome/matrícula) não encontrada."
     if not pay_cols:
         return _pd.DataFrame(), "Colunas de pagantes (sem integração) não localizadas."
@@ -2141,7 +2152,10 @@ def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
     d["_grat"] = _pd.to_numeric(d[grat_cols].sum(axis=1), errors="coerce").fillna(0)
     d["_one"] = 1
 
-    grp_keys = [drv] + ([lin] if lin else [])
+    grp_keys = [k for k in [drv, lin] if isinstance(k, str)]
+    if not grp_keys:
+        grp_keys = [drv]
+
     agg = d.groupby(grp_keys, dropna=False).agg(
         viagens=("_one","sum"),
         pagantes=("_pag","sum"),
@@ -2152,14 +2166,18 @@ def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
     if "grat_pag_ratio" not in agg.columns:
         agg["grat_pag_ratio"] = _np.nan
 
-    if baseline == "linha" and lin:
+    agg = agg[(agg["viagens"] >= int(min_trips)) & (agg["pagantes"] >= float(min_pag))]
+    if agg.empty:
+        return agg, "Sem grupos com amostragem mínima (ajuste os limiares)."
+
+    if lin and isinstance(lin, str) and lin in agg.columns:
         med = agg.groupby(lin)["grat_pag_ratio"].transform(lambda s: _pd.to_numeric(s, errors="coerce").median())
-        madn = agg.groupby(lin)["grat_pag_ratio"].transform(
-            lambda s: (lambda m, s2: (1.4826 * (s2 - m).abs().median()) if _pd.notna(m) else _np.nan)(
-                _pd.to_numeric(s, errors="coerce").median(),
-                _pd.to_numeric(s, errors="coerce")
-            )
-        )
+        def _madn_tr(s):
+            s2 = _pd.to_numeric(s, errors="coerce").dropna()
+            if s2.empty: return _np.nan
+            m = s2.median()
+            return 1.4826 * (s2 - m).abs().median() if _pd.notna(m) else _np.nan
+        madn = agg.groupby(lin)["grat_pag_ratio"].transform(_madn_tr)
     else:
         gsr = _pd.to_numeric(agg["grat_pag_ratio"], errors="coerce")
         med_val, madn_val = _robust_baseline(gsr)
@@ -2185,39 +2203,32 @@ def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
     agg["Suspeita"] = agg["Suspeita"].astype(order)
     agg = agg.sort_values(["Suspeita","z_rob","% grat/pag"], ascending=[True, False, False])
 
-    # Seleção e nomes finais – garante "Motorista" com o campo de NOME quando existir
-    out_cols = [drv] + ([lin] if lin else []) + ["viagens","pagantes","gratuidades","% grat/pag","z_rob","Sinal"]
+    # Seleção – garante "Motorista" por NOME quando existir
+    out_cols = [c for c in [drv, lin, "viagens","pagantes","gratuidades","% grat/pag","z_rob","Sinal"] if isinstance(c, str) or c in ["viagens","pagantes","gratuidades","% grat/pag","z_rob","Sinal"]]
     out = agg[out_cols].copy()
-    if drv_name and drv_name in out.columns:
-        pass
+    if drv_name and isinstance(drv_name, str) and drv_name in out.columns:
         out.rename(columns={drv_name:"Motorista"}, inplace=True)
-    else:
+    elif drv in out.columns:
         out.rename(columns={drv:"Motorista"}, inplace=True)
-    if lin and lin in out.columns:
+    if lin and isinstance(lin, str) and lin in out.columns:
         out.rename(columns={lin:"Linha"}, inplace=True)
     return out, None
 
 def _sus_trip_level(df, selected_driver):
-    """Detalha viagens do motorista selecionado, marcando viagens com possível desvio.
-    Define suspeita por viagem usando baseline robusto (mediana+MADN) por linha (no nível de viagem).
-    """
     drv, drv_name, drv_id, lin, pay_cols, grat_cols = _sus_detect_cols(df)
-    if drv is None or not pay_cols or not grat_cols:
+    if not isinstance(drv, str) or drv not in df.columns or not pay_cols or not grat_cols:
         return _pd.DataFrame(), "Colunas necessárias não localizadas."
 
     d = df.copy()
-    # Normaliza datas para ordenação
     date_col = _sus_first(d, ["Data","Data Coleta","DataColeta"]) or "Data"
     if date_col in d.columns:
         d[date_col] = _pd.to_datetime(d[date_col], errors="coerce", dayfirst=True)
 
-    # Colunas de início/fim p/ duração
     ini_col = _sus_first(d, ["Data Hora Inicio Operacao","Data Hora Início Operação","Inicio Operacao","Início Operação","Hora Inicio","DataHoraInicio"])
     fim_col = _sus_first(d, ["Data Hora Final Operacao","Data Hora Final Operação","Fim Operacao","Hora Final","DataHoraFim"])
     if ini_col in d.columns: d[ini_col] = _pd.to_datetime(d[ini_col], errors="coerce", dayfirst=True)
     if fim_col in d.columns: d[fim_col] = _pd.to_datetime(d[fim_col], errors="coerce", dayfirst=True)
 
-    # Filtra motorista
     d = d[d[drv] == selected_driver].copy()
     if d.empty:
         return _pd.DataFrame(), "Sem viagens para o motorista selecionado."
@@ -2226,15 +2237,14 @@ def _sus_trip_level(df, selected_driver):
     d["_grat"] = _pd.to_numeric(d[grat_cols].sum(axis=1), errors="coerce").fillna(0)
     d["grat_pag_ratio"] = _np.where(d["_pag"]>0, d["_grat"]/d["_pag"], _np.nan)
 
-    # Baseline por linha no nível de viagem
-    if lin:
+    if lin and isinstance(lin, str) and lin in d.columns:
         med = d.groupby(lin)["grat_pag_ratio"].transform(lambda s: _pd.to_numeric(s, errors="coerce").median())
-        madn = d.groupby(lin)["grat_pag_ratio"].transform(
-            lambda s: (lambda m, s2: (1.4826 * (s2 - m).abs().median()) if _pd.notna(m) else _np.nan)(
-                _pd.to_numeric(s, errors="coerce").median(),
-                _pd.to_numeric(s, errors="coerce")
-            )
-        )
+        def _madn_tr(s):
+            s2 = _pd.to_numeric(s, errors="coerce").dropna()
+            if s2.empty: return _np.nan
+            m = s2.median()
+            return 1.4826 * (s2 - m).abs().median() if _pd.notna(m) else _np.nan
+        madn = d.groupby(lin)["grat_pag_ratio"].transform(_madn_tr)
     else:
         med_val, madn_val = _robust_baseline(d["grat_pag_ratio"])
         med = _pd.Series(med_val, index=d.index)
@@ -2250,30 +2260,29 @@ def _sus_trip_level(df, selected_driver):
         return "BAIXA"
     d["Suspeita (viagem)"] = d["z_rob_viagem"].apply(_lvl)
 
-    # Duração (min) se possível
     if ini_col and fim_col and ini_col in d.columns and fim_col in d.columns:
         d["Duração (min)"] = (d[fim_col] - d[ini_col]).dt.total_seconds() / 60.0
 
-    # Saída com colunas úteis
     show_cols = []
     if "Data" in d.columns: show_cols.append("Data")
     elif date_col in d.columns: show_cols.append(date_col)
-    if lin and lin in d.columns: show_cols.append(lin)
+    if lin and isinstance(lin, str) and lin in d.columns: show_cols.append(lin)
     if ini_col in d.columns: show_cols.append(ini_col)
     if fim_col in d.columns: show_cols.append(fim_col)
     show_cols += ["_pag","_grat","grat_pag_ratio","z_rob_viagem","Suspeita (viagem)"]
     out = d[show_cols].copy()
-    out.rename(columns={
-        date_col:"Data",
-        lin:"Linha",
-        ini_col:"Início",
-        fim_col:"Fim",
+    rename_map = {}
+    if date_col in out.columns: rename_map[date_col] = "Data"
+    if lin and isinstance(lin, str) and lin in out.columns: rename_map[lin] = "Linha"
+    if ini_col in out.columns: rename_map[ini_col] = "Início"
+    if fim_col in out.columns: rename_map[fim_col] = "Fim"
+    rename_map.update({
         "_pag":"Pagantes",
         "_grat":"Gratuidades",
         "grat_pag_ratio":"% grat/pag (viagem)",
         "z_rob_viagem":"z_rob (viagem)"
-    }, inplace=True)
-    # Formatação simples
+    })
+    out.rename(columns=rename_map, inplace=True)
     out["% grat/pag (viagem)"] = (out["% grat/pag (viagem)"]*100).round(2)
     return out.sort_values(["Suspeita (viagem)","% grat/pag (viagem)"], ascending=[True, False]), None
 
@@ -2307,9 +2316,13 @@ def _render_suspeitas_panel(df):
     try:
         level_color = {"ALTA":"#ef4444","MÉDIA":"#f97316","BAIXA":"#facc15","inconclusivo":"#9ca3af"}
         chart = tbl.head(topn).copy()
-        chart["Nivel"] = chart["Sinal"].str.split().str[-1].map({"ALTA":"ALTA","MÉDIA":"MÉDIA","BAIXA":"BAIXA"}).fillna("BAIXA")
+        if "Motorista" not in chart.columns:
+            # fallback: tenta detectar o campo de nome
+            name_col = _sus_first(chart, ["Cobrador/Operador","Nome Motorista","Motorista","Nome do Motorista","Nome Condutor","Condutor"]) or chart.columns[0]
+            chart.rename(columns={name_col:"Motorista"}, inplace=True)
+        chart["Nivel"] = chart["Sinal"].astype(str).str.split().str[-1].map({"ALTA":"ALTA","MÉDIA":"MÉDIA","BAIXA":"BAIXA"}).fillna("BAIXA")
         chart["Cor"] = chart["Nivel"].map(level_color)
-        x = chart["Motorista"] if "Motorista" in chart.columns else (chart.iloc[:,0] if chart.shape[1]>0 else [])
+        x = chart["Motorista"]
         fig = _go.Figure()
         fig.add_bar(x=x, y=chart["% grat/pag"], marker_color=chart["Cor"], name="% grat/pag")
         fig.update_layout(height=360, margin=dict(l=0,r=0,t=10,b=0), yaxis_title="% grat/pag", xaxis_title="Motorista")
@@ -2317,7 +2330,6 @@ def _render_suspeitas_panel(df):
     except Exception as _e:
         _st.warning(f"Falha ao desenhar gráfico: {_e}")
 
-    # Drill-down por motorista (nome preferido)
     mot_opts = tbl["Motorista"].dropna().unique().tolist() if "Motorista" in tbl.columns else []
     if mot_opts:
         sel = _st.selectbox("🔍 Detalhar motorista", mot_opts, index=0)
@@ -2330,11 +2342,9 @@ def _render_suspeitas_panel(df):
                 _st.info("Sem viagens para o motorista selecionado.")
             else:
                 _st.dataframe(det, use_container_width=True)
-                _st.caption("Linhas marcadas como **ALTA/MÉDIA** indicam viagens com maior probabilidade de desvio; confirme com contexto operacional.")
+                _st.caption("Viagens **ALTA/MÉDIA** indicam maior probabilidade de desvio; confirme o contexto operacional.")
 
-    _st.markdown(
-        "**Legenda:** 🔴 ALTA (z ≥ 3) • 🟠 MÉDIA (2 ≤ z < 3) • 🟡 BAIXA (0 ≤ z < 2) • ⚪ Inconclusivo (amostra mínima/variância)."
-    )
+    _st.markdown("**Legenda:** 🔴 ALTA (z ≥ 3) • 🟠 MÉDIA (2 ≤ z < 3) • 🟡 BAIXA (0 ≤ z < 2) • ⚪ Inconclusivo (amostra mínima/variância).")
 
 try:
     _df_base = df_filtered.copy() if 'df_filtered' in globals() else df.copy()
