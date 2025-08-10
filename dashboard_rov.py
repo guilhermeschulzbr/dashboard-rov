@@ -9,6 +9,23 @@ import re
 import os
 import json
 import sqlite3  # para persistência em banco SQLite
+#
+# Suporte para persistência em banco de dados externo
+#
+# Se o usuário definir um segredo `database_url` (ou `supabase_url`) via
+# Streamlit Secrets, este app utilizará esse URL de conexão para
+# armazenar e consultar dados em um banco PostgreSQL (por exemplo,
+# Supabase). Caso nenhum segredo seja fornecido, o app continuará
+# utilizando o banco SQLite local (`dados_ROV.db`).
+try:
+    import sqlalchemy
+    from sqlalchemy import text
+    _HAS_SQLALCHEMY = True
+except Exception:
+    # SQLAlchemy não é obrigatório quando usando apenas SQLite
+    sqlalchemy = None
+    text = None
+    _HAS_SQLALCHEMY = False
 from typing import Optional
 import numpy as np
 import pandas as pd
@@ -60,17 +77,73 @@ DB_PATH = os.path.join(os.getcwd(), "dados_ROV.db")
 # Caminho padrão para o CSV inicial utilizado para popular o banco na primeira execução.
 CSV_INIT_PATH = os.path.join(os.getcwd(), "dados_ROV.csv")
 
+#
+# Determina e retorna um SQLAlchemy engine para um banco externo, se disponível.
+# Se o usuário definir um segredo `database_url` ou `supabase_url` nas
+# configurações de secrets do Streamlit, o app utilizará essa URL para
+# persistir os dados em um banco PostgreSQL. Caso contrário, a persistência
+# será feita em um banco SQLite local (`dados_ROV.db`). Quando SQLAlchemy
+# não estiver instalado, esta função retorna `None`.
+def get_external_engine():
+    """
+    Obtém um SQLAlchemy engine para conexão externa com base nos secrets.
+
+    :return: engine SQLAlchemy caso exista URL definida e SQLAlchemy esteja
+             disponível; caso contrário, retorna `None`.
+    """
+    try:
+        import streamlit as _st
+    except Exception:
+        return None
+    # Retorna None se SQLAlchemy não está disponível
+    if not _HAS_SQLALCHEMY:
+        return None
+    # Obtém URL do banco a partir de secrets
+    db_url = None
+    try:
+        db_url = _st.secrets.get("database_url") or _st.secrets.get("supabase_url")
+    except Exception:
+        db_url = None
+    if not db_url:
+        return None
+    try:
+        engine = sqlalchemy.create_engine(db_url)
+        return engine
+    except Exception:
+        return None
+
 def init_db(schema_columns):
     """
-    Cria (se necessário) e retorna uma conexão para o banco SQLite. O esquema será
-    derivado da lista de colunas fornecida. Uma coluna adicional "row_hash" é criada
-    como chave primária para identificação única de cada linha.
+    Cria (se necessário) e retorna uma conexão ou engine de banco de dados.
+
+    Se um engine externo estiver disponível (obtido via `get_external_engine()`),
+    a tabela "dados" será criada nesse banco, utilizando SQLAlchemy. Caso
+    contrário, a persistência ocorre via SQLite, criando o arquivo
+    `dados_ROV.db` localmente.
+
+    :param schema_columns: lista de colunas para definição do esquema.
+    :return: engine SQLAlchemy para banco externo ou conexão SQLite.
     """
+    engine = get_external_engine()
+    # Se engine externo disponível
+    if engine is not None:
+        # Define colunas com tipo textual e coluna row_hash
+        col_defs = ", ".join([f'"{c}" TEXT' for c in schema_columns] + ['row_hash TEXT PRIMARY KEY'])
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f'CREATE TABLE IF NOT EXISTS dados ({col_defs});'))
+            return engine
+        except Exception:
+            # Em caso de erro ao criar tabela no banco externo, retorna None para fallback
+            pass
+    # Fallback para SQLite local
     conn = sqlite3.connect(DB_PATH)
-    # Monta definição de colunas: todas as colunas como TEXT para simplicidade.
     col_defs = ", ".join([f'"{c}" TEXT' for c in schema_columns] + ['row_hash TEXT PRIMARY KEY'])
-    conn.execute(f'CREATE TABLE IF NOT EXISTS dados ({col_defs});')
-    conn.commit()
+    try:
+        conn.execute(f'CREATE TABLE IF NOT EXISTS dados ({col_defs});')
+        conn.commit()
+    except Exception:
+        pass
     return conn
 
 def compute_row_hash(df: pd.DataFrame) -> pd.Series:
@@ -82,41 +155,104 @@ def compute_row_hash(df: pd.DataFrame) -> pd.Series:
     df_str = df.astype(str)
     return pd.util.hash_pandas_object(df_str, index=False).astype(str)
 
-def insert_df_to_db(conn: sqlite3.Connection, df: pd.DataFrame) -> None:
+def insert_df_to_db(conn, df: pd.DataFrame) -> None:
     """
     Insere registros no banco, ignorando aqueles que já existem (com base na coluna row_hash).
+
+    Esta função aceita tanto uma conexão SQLite quanto um engine/connection
+    SQLAlchemy para bancos externos. A lógica de deduplicação permanece a mesma:
+    são lidos os hashes existentes e, em seguida, apenas as linhas novas são
+    gravadas no banco.
+
+    :param conn: conexão SQLite ou engine/connection SQLAlchemy
+    :param df: DataFrame a ser inserido
     """
     if df is None or df.empty:
         return
     # Calcula hash de linha e adiciona coluna
     df = df.copy()
     df['row_hash'] = compute_row_hash(df)
-    # Lê hashes existentes para evitar duplicidade
-    try:
-        existing = pd.read_sql_query('SELECT row_hash FROM dados', conn)['row_hash'].tolist()
-    except Exception:
-        existing = []
-    # Filtra apenas linhas novas
-    df_new = df[~df['row_hash'].isin(existing)]
-    if df_new.empty:
-        return
-    # Adapta colunas ao esquema existente. Obtem as colunas atuais da tabela
-    try:
-        cur = conn.execute('PRAGMA table_info(dados)')
-        tbl_cols = [row[1] for row in cur.fetchall()]
-    except Exception:
+
+    # Determina se estamos usando SQLAlchemy (banco externo) ou SQLite
+    using_external = False
+    engine = None
+    if _HAS_SQLALCHEMY:
+        try:
+            from sqlalchemy.engine import Engine, Connection
+            if isinstance(conn, (Engine, Connection)):
+                using_external = True
+                # Para Engine, podemos utilizar diretamente; para Connection, recuperamos engine
+                engine = conn if isinstance(conn, Engine) else conn.engine
+        except Exception:
+            using_external = False
+
+    if using_external and engine is not None:
+        # Acesso via SQLAlchemy
+        try:
+            with engine.begin() as ext_conn:
+                # Lê hashes existentes
+                try:
+                    existing_df = pd.read_sql('SELECT row_hash FROM dados', ext_conn)
+                    existing = existing_df['row_hash'].tolist()
+                except Exception:
+                    existing = []
+                # Filtra apenas linhas novas
+                df_new = df[~df['row_hash'].isin(existing)]
+                if df_new.empty:
+                    return
+                # Adapta colunas ao esquema existente
+                try:
+                    # Obtém colunas da tabela 'dados' no schema público
+                    result = ext_conn.execute(text("""
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_name = 'dados'
+                        AND table_schema = current_schema()
+                    """))
+                    tbl_cols = [row[0] for row in result]
+                except Exception:
+                    tbl_cols = None
+                if tbl_cols:
+                    base_cols = [c for c in tbl_cols if c != 'row_hash']
+                    for c in base_cols:
+                        if c not in df_new.columns:
+                            df_new[c] = pd.NA
+                    # Mantém apenas colunas existentes + row_hash
+                    keep_cols = [c for c in base_cols if c in df_new.columns] + ['row_hash']
+                    df_new = df_new[keep_cols]
+                # Insere no banco
+                df_new.to_sql('dados', engine, if_exists='append', index=False)
+        except Exception:
+            # Silencia erros para evitar quebra total do app
+            return
+    else:
+        # Operação com SQLite
+        try:
+            existing = pd.read_sql_query('SELECT row_hash FROM dados', conn)['row_hash'].tolist()
+        except Exception:
+            existing = []
+        df_new = df[~df['row_hash'].isin(existing)]
+        if df_new.empty:
+            return
+        # Adapta colunas ao esquema existente. Obtem as colunas atuais da tabela
         tbl_cols = None
-    if tbl_cols:
-        # Remove a coluna de hash se presente na lista de esquema
-        base_cols = [c for c in tbl_cols if c != 'row_hash']
-        # Garante que df_new possua todas as colunas da tabela, adicionando NaN onde necessário
-        for c in base_cols:
-            if c not in df_new.columns:
-                df_new[c] = pd.NA
-        # Mantém apenas as colunas que existem na tabela, exceto row_hash (será adicionada após)
-        df_new = df_new[[c for c in base_cols if c in df_new.columns] + ['row_hash']]
-    # Insere no banco
-    df_new.to_sql('dados', conn, if_exists='append', index=False)
+        try:
+            cur = conn.execute('PRAGMA table_info(dados)')
+            tbl_cols = [row[1] for row in cur.fetchall()]
+        except Exception:
+            tbl_cols = None
+        if tbl_cols:
+            base_cols = [c for c in tbl_cols if c != 'row_hash']
+            for c in base_cols:
+                if c not in df_new.columns:
+                    df_new[c] = pd.NA
+            df_new = df_new[[c for c in base_cols if c in df_new.columns] + ['row_hash']]
+        try:
+            df_new.to_sql('dados', conn, if_exists='append', index=False)
+            conn.commit()
+        except Exception:
+            # Algumas implementações de conexão fazem commit automaticamente
+            pass
 
 def ensure_db_initialized() -> None:
     """
@@ -124,16 +260,43 @@ def ensure_db_initialized() -> None:
     para criar o esquema e popular com dados. Caso o CSV inicial não esteja presente, a
     inicialização ocorrerá na primeira importação pelo usuário.
     """
+    # Primeiro verifica se estamos utilizando banco externo
+    engine = get_external_engine()
+    if engine is not None:
+        # Verifica se a tabela já existe e possui registros
+        try:
+            with engine.begin() as conn:
+                # Verifica se existe a tabela 'dados' no schema atual
+                tbl_exists = conn.execute(text("""
+                    SELECT COUNT(*)
+                    FROM information_schema.tables
+                    WHERE table_name = 'dados'
+                    AND table_schema = current_schema()
+                """)).scalar()
+                if tbl_exists == 0:
+                    # se não existe, cria e popula com CSV inicial (se existir)
+                    if os.path.exists(CSV_INIT_PATH):
+                        df_init = pd.read_csv(CSV_INIT_PATH, sep=';', encoding='latin1')
+                        # cria estrutura
+                        init_db(df_init.columns.tolist())
+                        insert_df_to_db(engine, df_init)
+        except Exception:
+            # Silencia falhas de inicialização
+            pass
+        return
+    # Caso seja persistência local (SQLite), criamos o arquivo de banco se não existir
     if not os.path.exists(DB_PATH):
-        # Banco não existe ainda. Tenta utilizar CSV inicial.
         if os.path.exists(CSV_INIT_PATH):
             try:
                 df_init = pd.read_csv(CSV_INIT_PATH, sep=';', encoding='latin1')
                 conn = init_db(df_init.columns.tolist())
                 insert_df_to_db(conn, df_init)
-                conn.close()
+                # se for engine (via init_db), não há método close; tenta fechar somente se for sqlite
+                try:
+                    conn.close()
+                except Exception:
+                    pass
             except Exception:
-                # Falha ao inicializar com CSV inicial; banco será criado quando o usuário importar.
                 pass
 
 def load_json_config(path: str):
@@ -817,17 +980,30 @@ uploaded_file = st.sidebar.file_uploader(
 )
 
 # Leia dados atuais do banco para construir o DataFrame principal
-if os.path.exists(DB_PATH):
-    conn_tmp = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query('SELECT * FROM dados', conn_tmp)
-    conn_tmp.close()
-    # remove hash interno e normaliza tipos
-    if 'row_hash' in df.columns:
+df = pd.DataFrame()
+engine_ext = get_external_engine()
+if engine_ext is not None:
+    # Conexão externa: lê do banco via SQLAlchemy
+    try:
+        with engine_ext.begin() as conn_tmp:
+            df = pd.read_sql('SELECT * FROM dados', conn_tmp)
+    except Exception:
+        df = pd.DataFrame()
+    # remove hash interno se presente e normaliza
+    if not df.empty and 'row_hash' in df.columns:
         df = df.drop(columns=['row_hash'])
     df = normalize_db_df(df)
 else:
-    # Se por algum motivo o banco ainda não existir, inicialize-o como vazio
-    df = pd.DataFrame()
+    # Persistência local: usa SQLite
+    if os.path.exists(DB_PATH):
+        conn_tmp = sqlite3.connect(DB_PATH)
+        df = pd.read_sql_query('SELECT * FROM dados', conn_tmp)
+        conn_tmp.close()
+        if 'row_hash' in df.columns:
+            df = df.drop(columns=['row_hash'])
+        df = normalize_db_df(df)
+    else:
+        df = pd.DataFrame()
 
 # Se o usuário fizer upload de um novo arquivo, processa o arquivo e atualiza o
 # banco. O DataFrame principal `df` é recarregado após a inserção.
@@ -835,16 +1011,33 @@ if uploaded_file is not None:
     with st.spinner("Carregando dados..."):
         # carrega dados utilizando a rotina existente (para tratamento de tipos/datas)
         df_new = load_data(uploaded_file)
-        # Cria o banco caso ainda não exista
-        if not os.path.exists(DB_PATH):
-            conn = init_db(df_new.columns.tolist())
+        # Decide se estamos usando banco externo ou SQLite
+        engine_ext = get_external_engine()
+        if engine_ext is not None:
+            # Cria tabela se não existir e insere dados
+            conn_or_engine = init_db(df_new.columns.tolist())
+            insert_df_to_db(conn_or_engine, df_new)
+            # Recarrega dados do banco
+            try:
+                with engine_ext.begin() as conn_tmp:
+                    df = pd.read_sql('SELECT * FROM dados', conn_tmp)
+            except Exception:
+                df = pd.DataFrame()
         else:
-            conn = sqlite3.connect(DB_PATH)
-        insert_df_to_db(conn, df_new)
-        # Recarrega todos os dados da base para DataFrame principal e normaliza
-        df = pd.read_sql_query('SELECT * FROM dados', conn)
-        conn.close()
-        if 'row_hash' in df.columns:
+            # SQLite: cria banco se necessário
+            if not os.path.exists(DB_PATH):
+                conn = init_db(df_new.columns.tolist())
+            else:
+                conn = sqlite3.connect(DB_PATH)
+            insert_df_to_db(conn, df_new)
+            df = pd.read_sql_query('SELECT * FROM dados', conn)
+            # fecha conexão SQLite
+            try:
+                conn.close()
+            except Exception:
+                pass
+        # remove hash interno se presente e normaliza
+        if not df.empty and 'row_hash' in df.columns:
             df = df.drop(columns=['row_hash'])
         df = normalize_db_df(df)
         st.sidebar.success("Importação concluída! Novas linhas foram adicionadas à base.")
