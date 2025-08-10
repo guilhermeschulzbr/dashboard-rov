@@ -2074,6 +2074,7 @@ except Exception as _e:
 
 
 
+
 # === PAINEL DE SUSPEITAS: GRATUIDADES POR MOTORISTA ===
 import pandas as _pd
 import numpy as _np
@@ -2091,9 +2092,15 @@ def _sus_first(df, names):
     return None
 
 def _sus_detect_cols(df):
-    driver_col = _sus_first(df, ["Motorista","Nome Motorista","Condutor","CPF Motorista","ID Motorista","Id Motorista","Matricula","Matrícula"])
-    line_col   = _sus_first(df, ["Nome Linha","Linha"])
+    # Preferir NOME do motorista
+    name_candidates = ["Nome Motorista","Motorista","Nome do Motorista","Nome Condutor","Condutor"]
+    id_candidates   = ["Matricula","Matrícula","CPF Motorista","ID Motorista","Id Motorista"]
+    driver_name = _sus_first(df, name_candidates)
+    driver_id   = _sus_first(df, id_candidates)
+    driver_col  = driver_name or driver_id  # sempre prioriza nome
+    line_col    = _sus_first(df, ["Nome Linha","Linha"])
 
+    # Pagantes SEM integração
     pay_whitelist = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
     pay_present = [c for c in pay_whitelist if c in df.columns]
     if not pay_present:
@@ -2102,27 +2109,28 @@ def _sus_detect_cols(df):
                 if _re.search(r"(?i)quant", c) and _re.search(r"(?i)(inteir|passag|passe|vale|vt)", c) and not _re.search(r"(?i)grat", c) and not _re.search(r"(?i)integr", c):
                     pay_present.append(c)
 
+    # Gratuidades SEM integração
     grat_cols = [c for c in df.columns if _re.search(r"(?i)grat", c) and not _re.search(r"(?i)integr", c)]
 
-    return driver_col, line_col, pay_present, grat_cols
+    return driver_col, driver_name, driver_id, line_col, pay_present, grat_cols
 
-def _sus_robust_baseline(series):
+def _robust_baseline(series):
     s = _pd.to_numeric(series, errors="coerce").dropna()
     if s.empty:
         return _np.nan, _np.nan
     med = s.median()
     mad = (s - med).abs().median()
-    madn = 1.4826 * mad if mad and mad > 0 else _np.nan
+    madn = 1.4826 * mad if (mad is not None and mad > 0) else _np.nan
     return med, madn
 
 def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
     if df is None or df.empty:
         return _pd.DataFrame(), "Sem dados após filtros."
 
-    drv, lin, pay_cols, grat_cols = _sus_detect_cols(df)
+    drv, drv_name, drv_id, lin, pay_cols, grat_cols = _sus_detect_cols(df)
 
     if drv is None:
-        return _pd.DataFrame(), "Coluna de motorista não encontrada."
+        return _pd.DataFrame(), "Coluna de motorista (nome/matrícula) não encontrada."
     if not pay_cols:
         return _pd.DataFrame(), "Colunas de pagantes (sem integração) não localizadas."
     if not grat_cols:
@@ -2140,17 +2148,10 @@ def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
         gratuidades=("_grat","sum"),
     ).reset_index()
 
-    # Garante a coluna de razão SEM barra para evitar KeyError
     agg["grat_pag_ratio"] = _np.where(agg["pagantes"]>0, agg["gratuidades"]/agg["pagantes"], _np.nan)
     if "grat_pag_ratio" not in agg.columns:
         agg["grat_pag_ratio"] = _np.nan
 
-    # Filtros mínimos para significância
-    agg = agg[(agg["viagens"] >= int(min_trips)) & (agg["pagantes"] >= float(min_pag))]
-    if agg.empty:
-        return agg, "Sem grupos com amostragem mínima (ajuste os limiares)."
-
-    # Baseline robusto (por linha ou global), com transform para evitar merges
     if baseline == "linha" and lin:
         med = agg.groupby(lin)["grat_pag_ratio"].transform(lambda s: _pd.to_numeric(s, errors="coerce").median())
         madn = agg.groupby(lin)["grat_pag_ratio"].transform(
@@ -2161,15 +2162,13 @@ def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
         )
     else:
         gsr = _pd.to_numeric(agg["grat_pag_ratio"], errors="coerce")
-        med_val, madn_val = _sus_robust_baseline(gsr)
+        med_val, madn_val = _robust_baseline(gsr)
         med = _pd.Series(med_val, index=agg.index)
         madn = _pd.Series(madn_val, index=agg.index)
 
-    # z-score robusto com proteção contra divisão por zero
     denom = madn.replace({0:_np.nan})
     agg["z_rob"] = ( _pd.to_numeric(agg["grat_pag_ratio"], errors="coerce") - _pd.to_numeric(med, errors="coerce") ) / denom
 
-    # Níveis e badges
     def _lvl(z):
         if _pd.isna(z): return "inconclusivo"
         if z >= 3: return "ALTA"
@@ -2186,14 +2185,96 @@ def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
     agg["Suspeita"] = agg["Suspeita"].astype(order)
     agg = agg.sort_values(["Suspeita","z_rob","% grat/pag"], ascending=[True, False, False])
 
-    # Seleção e nomes finais
+    # Seleção e nomes finais – garante "Motorista" com o campo de NOME quando existir
     out_cols = [drv] + ([lin] if lin else []) + ["viagens","pagantes","gratuidades","% grat/pag","z_rob","Sinal"]
     out = agg[out_cols].copy()
-    if drv in out.columns:
+    if drv_name and drv_name in out.columns:
+        out.rename(columns={drv_name:"Motorista"}, inplace=True)
+    else:
         out.rename(columns={drv:"Motorista"}, inplace=True)
     if lin and lin in out.columns:
         out.rename(columns={lin:"Linha"}, inplace=True)
     return out, None
+
+def _sus_trip_level(df, selected_driver):
+    """Detalha viagens do motorista selecionado, marcando viagens com possível desvio.
+    Define suspeita por viagem usando baseline robusto (mediana+MADN) por linha (no nível de viagem).
+    """
+    drv, drv_name, drv_id, lin, pay_cols, grat_cols = _sus_detect_cols(df)
+    if drv is None or not pay_cols or not grat_cols:
+        return _pd.DataFrame(), "Colunas necessárias não localizadas."
+
+    d = df.copy()
+    # Normaliza datas para ordenação
+    date_col = _sus_first(d, ["Data","Data Coleta","DataColeta"]) or "Data"
+    if date_col in d.columns:
+        d[date_col] = _pd.to_datetime(d[date_col], errors="coerce", dayfirst=True)
+
+    # Colunas de início/fim p/ duração
+    ini_col = _sus_first(d, ["Data Hora Inicio Operacao","Data Hora Início Operação","Inicio Operacao","Início Operação","Hora Inicio","DataHoraInicio"])
+    fim_col = _sus_first(d, ["Data Hora Final Operacao","Data Hora Final Operação","Fim Operacao","Hora Final","DataHoraFim"])
+    if ini_col in d.columns: d[ini_col] = _pd.to_datetime(d[ini_col], errors="coerce", dayfirst=True)
+    if fim_col in d.columns: d[fim_col] = _pd.to_datetime(d[fim_col], errors="coerce", dayfirst=True)
+
+    # Filtra motorista
+    d = d[d[drv] == selected_driver].copy()
+    if d.empty:
+        return _pd.DataFrame(), "Sem viagens para o motorista selecionado."
+
+    d["_pag"] = _pd.to_numeric(d[pay_cols].sum(axis=1), errors="coerce").fillna(0)
+    d["_grat"] = _pd.to_numeric(d[grat_cols].sum(axis=1), errors="coerce").fillna(0)
+    d["grat_pag_ratio"] = _np.where(d["_pag"]>0, d["_grat"]/d["_pag"], _np.nan)
+
+    # Baseline por linha no nível de viagem
+    if lin:
+        med = d.groupby(lin)["grat_pag_ratio"].transform(lambda s: _pd.to_numeric(s, errors="coerce").median())
+        madn = d.groupby(lin)["grat_pag_ratio"].transform(
+            lambda s: (lambda m, s2: (1.4826 * (s2 - m).abs().median()) if _pd.notna(m) else _np.nan)(
+                _pd.to_numeric(s, errors="coerce").median(),
+                _pd.to_numeric(s, errors="coerce")
+            )
+        )
+    else:
+        med_val, madn_val = _robust_baseline(d["grat_pag_ratio"])
+        med = _pd.Series(med_val, index=d.index)
+        madn = _pd.Series(madn_val, index=d.index)
+
+    denom = madn.replace({0:_np.nan})
+    d["z_rob_viagem"] = ( _pd.to_numeric(d["grat_pag_ratio"], errors="coerce") - _pd.to_numeric(med, errors="coerce") ) / denom
+
+    def _lvl(z):
+        if _pd.isna(z): return "inconclusivo"
+        if z >= 3: return "ALTA"
+        if z >= 2: return "MÉDIA"
+        return "BAIXA"
+    d["Suspeita (viagem)"] = d["z_rob_viagem"].apply(_lvl)
+
+    # Duração (min) se possível
+    if ini_col and fim_col and ini_col in d.columns and fim_col in d.columns:
+        d["Duração (min)"] = (d[fim_col] - d[ini_col]).dt.total_seconds() / 60.0
+
+    # Saída com colunas úteis
+    show_cols = []
+    if "Data" in d.columns: show_cols.append("Data")
+    elif date_col in d.columns: show_cols.append(date_col)
+    if lin and lin in d.columns: show_cols.append(lin)
+    if ini_col in d.columns: show_cols.append(ini_col)
+    if fim_col in d.columns: show_cols.append(fim_col)
+    show_cols += ["_pag","_grat","grat_pag_ratio","z_rob_viagem","Suspeita (viagem)"]
+    out = d[show_cols].copy()
+    out.rename(columns={
+        date_col:"Data",
+        lin:"Linha",
+        ini_col:"Início",
+        fim_col:"Fim",
+        "_pag":"Pagantes",
+        "_grat":"Gratuidades",
+        "grat_pag_ratio":"% grat/pag (viagem)",
+        "z_rob_viagem":"z_rob (viagem)"
+    }, inplace=True)
+    # Formatação simples
+    out["% grat/pag (viagem)"] = (out["% grat/pag (viagem)"]*100).round(2)
+    return out.sort_values(["Suspeita (viagem)","% grat/pag (viagem)"], ascending=[True, False]), None
 
 def _render_suspeitas_panel(df):
     if _st is None:
@@ -2201,8 +2282,8 @@ def _render_suspeitas_panel(df):
 
     _st.markdown("## 🚩 Possíveis desvios: gratuidades por motorista")
     _st.caption(
-        "Este painel destaca **motoristas com maior proporção de gratuidades (sem integrações)** em relação aos **pagantes (sem integrações)**. "
-        "Usa baseline **robusto** (mediana + MAD) por **linha** para comparar comportamentos."
+        "Painel de **gratuidades (sem integrações) ÷ pagantes (sem integrações)** por **motorista**. "
+        "Baseline **robusto** (mediana + MAD) por **linha**. Use os filtros gerais do dashboard para refinar o escopo."
     )
 
     _st.sidebar.markdown("**Parâmetros de suspeição**")
@@ -2235,12 +2316,23 @@ def _render_suspeitas_panel(df):
     except Exception as _e:
         _st.warning(f"Falha ao desenhar gráfico: {_e}")
 
+    # Drill-down por motorista (nome preferido)
+    mot_opts = tbl["Motorista"].dropna().unique().tolist() if "Motorista" in tbl.columns else []
+    if mot_opts:
+        sel = _st.selectbox("🔍 Detalhar motorista", mot_opts, index=0)
+        if sel:
+            _st.markdown(f"#### Viagens de **{sel}**")
+            det, warn2 = _sus_trip_level(base_df, sel)
+            if warn2:
+                _st.info(warn2)
+            elif det.empty:
+                _st.info("Sem viagens para o motorista selecionado.")
+            else:
+                _st.dataframe(det, use_container_width=True)
+                _st.caption("Linhas marcadas como **ALTA/MÉDIA** indicam viagens com maior probabilidade de desvio; confirme com contexto operacional.")
+
     _st.markdown(
-        "**Legenda:** 🔴 ALTA (z_rob ≥ 3) • 🟠 MÉDIA (2 ≤ z_rob < 3) • 🟡 BAIXA (0 ≤ z_rob < 2) • ⚪ Inconclusivo (amostra mínima não atendida ou variância muito baixa)."
-    )
-    _st.caption(
-        "⚠️ *Interpretação:* valores altos podem indicar **desvio** (ex.: liberação indevida). "
-        "Sempre considerar contexto (ex.: linhas escolares/hospitalares tendem a ter mais gratuidades legítimas)."
+        "**Legenda:** 🔴 ALTA (z ≥ 3) • 🟠 MÉDIA (2 ≤ z < 3) • 🟡 BAIXA (0 ≤ z < 2) • ⚪ Inconclusivo (amostra mínima/variância)."
     )
 
 try:
