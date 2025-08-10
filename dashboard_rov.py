@@ -2072,6 +2072,7 @@ except Exception as _e:
 
 
 
+
 # === PAINEL DE SUSPEITAS: GRATUIDADES POR MOTORISTA ===
 import pandas as _pd
 import numpy as _np
@@ -2089,22 +2090,17 @@ def _sus_first(df, names):
     return None
 
 def _sus_detect_cols(df):
-    # Coluna de motorista (várias possibilidades)
     driver_col = _sus_first(df, ["Motorista","Nome Motorista","Condutor","CPF Motorista","ID Motorista","Id Motorista","Matricula","Matrícula"])
-    # Coluna de linha (contexto para baseline por linha)
     line_col   = _sus_first(df, ["Nome Linha","Linha"])
 
-    # Pagantes SEM integração
     pay_whitelist = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
     pay_present = [c for c in pay_whitelist if c in df.columns]
-    # Fallback: qualquer coluna tipo "Quant ..." com termos de pagantes, sem "grat" e sem "integr"
     if not pay_present:
         for c in df.columns:
             if _pd.api.types.is_numeric_dtype(df[c]):
                 if _re.search(r"(?i)quant", c) and _re.search(r"(?i)(inteir|passag|passe|vale|vt)", c) and not _re.search(r"(?i)grat", c) and not _re.search(r"(?i)integr", c):
                     pay_present.append(c)
 
-    # Gratuidades SEM integração
     grat_cols = [c for c in df.columns if _re.search(r"(?i)grat", c) and not _re.search(r"(?i)integr", c)]
 
     return driver_col, line_col, pay_present, grat_cols
@@ -2116,7 +2112,7 @@ def _sus_robust_stats(s):
     q1, q2, q3 = s.quantile([0.25, 0.5, 0.75])
     iqr = q3 - q1 if (q3 - q1) != 0 else _np.nan
     mad = (s - q2).abs().median()
-    madn = 1.4826 * mad if mad and mad > 0 else _np.nan
+    madn = 1.4826 * mad if (mad is not None and mad > 0) else _np.nan
     std = s.std(ddof=0)
     return q2, iqr, madn, std
 
@@ -2134,7 +2130,6 @@ def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
         return _pd.DataFrame(), "Colunas de gratuidade (sem integração) não localizadas."
 
     d = df.copy()
-    # Soma pagantes e gratuidades sem integração por registro
     d["_pag"] = _pd.to_numeric(d[pay_cols].sum(axis=1), errors="coerce").fillna(0)
     d["_grat"] = _pd.to_numeric(d[grat_cols].sum(axis=1), errors="coerce").fillna(0)
     d["_one"] = 1
@@ -2146,8 +2141,8 @@ def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
         gratuidades=("_grat","sum"),
     ).reset_index()
 
-    # Razão de interesse (gratuidades/pagantes)
-    agg["grat/pag"] = _np.where(agg["pagantes"]>0, agg["gratuidades"]/agg["pagantes"], _np.nan)
+    # Razão de interesse com nome SEM barra para evitar KeyError
+    agg["grat_pag_ratio"] = _np.where(agg["pagantes"]>0, agg["gratuidades"]/agg["pagantes"], _np.nan)
 
     # Filtros mínimos para significância
     agg = agg[(agg["viagens"] >= int(min_trips)) & (agg["pagantes"] >= float(min_pag))]
@@ -2156,13 +2151,15 @@ def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
 
     # Baseline robusto por linha (mediana + MADN) ou global
     if baseline == "linha" and lin:
-        base = agg.groupby(lin)["grat/pag"].apply(lambda s: _pd.Series(_sus_robust_stats(s), index=["mediana","iqr","madn","std"])).reset_index()
+        base = agg.groupby(lin)["grat_pag_ratio"].apply(
+            lambda s: _pd.Series(_sus_robust_stats(s), index=["mediana","iqr","madn","std"])
+        ).reset_index()
         agg = agg.merge(base, on=lin, how="left")
-        agg["z_rob"] = (agg["grat/pag"] - agg["mediana"]) / agg["madn"].replace({0:_np.nan})
+        agg["z_rob"] = (agg["grat_pag_ratio"] - agg["mediana"]) / agg["madn"].replace({0:_np.nan})
     else:
-        med, iqr, madn, std = _sus_robust_stats(agg["grat/pag"])
+        med, iqr, madn, std = _sus_robust_stats(agg["grat_pag_ratio"])
         agg["mediana"] = med; agg["iqr"] = iqr; agg["madn"] = madn; agg["std"] = std
-        agg["z_rob"] = (agg["grat/pag"] - med) / (madn if madn and madn>0 else _np.nan)
+        agg["z_rob"] = (agg["grat_pag_ratio"] - med) / (madn if (madn is not None and madn>0) else _np.nan)
 
     # Regras de suspeita (legenda/cores)
     def level(z):
@@ -2176,14 +2173,12 @@ def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
 
     agg["Suspeita"] = agg["z_rob"].apply(level)
     agg["Sinal"] = agg["Suspeita"].apply(badge)
-    agg["% grat/pag"] = (agg["grat/pag"]*100).round(2)
+    agg["% grat/pag"] = (agg["grat_pag_ratio"]*100).round(2)
 
-    # Ordena: primeiro ALTA, depois MÉDIA, BAIXA, inconclusivo, e por z_rob desc
     order = _pd.CategoricalDtype(categories=["ALTA","MÉDIA","BAIXA","inconclusivo"], ordered=True)
     agg["Suspeita"] = agg["Suspeita"].astype(order)
     agg = agg.sort_values(["Suspeita","z_rob","% grat/pag"], ascending=[True, False, False])
 
-    # Seleção de colunas de saída
     out_cols = []
     out_cols.append(drv)
     if lin: out_cols.append(lin)
@@ -2202,7 +2197,6 @@ def _render_suspeitas_panel(df):
         "Usa baseline **robusto** (mediana + MAD) por **linha** para comparar comportamentos."
     )
 
-    # Controles na sidebar
     _st.sidebar.markdown("**Parâmetros de suspeição**")
     min_trips = int(_st.sidebar.number_input("Mínimo de viagens por motorista", min_value=1, max_value=100, value=10, step=1))
     min_pag = float(_st.sidebar.number_input("Mínimo de pagantes (sem integr.)", min_value=0.0, max_value=1e6, value=100.0, step=10.0))
@@ -2212,22 +2206,18 @@ def _render_suspeitas_panel(df):
 
     tbl, warn = _sus_compute_table(df, min_trips=min_trips, min_pag=min_pag, baseline=baseline_key)
     if warn:
-        _st.info(warn)
-        return
+        _st.info(warn); return
     if tbl.empty:
-        _st.info("Sem registros após aplicar os parâmetros.")
-        return
+        _st.info("Sem registros após aplicar os parâmetros."); return
 
-    # Tabela principal
     _st.markdown("### Ranking por motorista")
     _st.dataframe(tbl.head(topn), use_container_width=True)
 
-    # Chart com as maiores suspeitas (z_rob) – barras coloridas por nível
     try:
         level_color = {"ALTA":"#ef4444","MÉDIA":"#f97316","BAIXA":"#facc15","inconclusivo":"#9ca3af"}
         chart = tbl.head(topn).copy()
-        # identifica nível pela palavra inicial do badge
-        chart["Nivel"] = chart["Sinal"].str.split().str[0].map({"🔴":"ALTA","🟠":"MÉDIA","🟡":"BAIXA","⚪":"inconclusivo"}).fillna("BAIXA")
+        # tenta inferir nível a partir do texto do badge (Sinal)
+        chart["Nivel"] = chart["Sinal"].str.split().str[-1].map({"ALTA":"ALTA","MÉDIA":"MÉDIA","BAIXA":"BAIXA"}).fillna("BAIXA")
         chart["Cor"] = chart["Nivel"].map(level_color)
         x = chart["Motorista"] if "Motorista" in chart.columns else chart.iloc[:,0]
         fig = _go.Figure()
@@ -2237,7 +2227,6 @@ def _render_suspeitas_panel(df):
     except Exception as _e:
         _st.warning(f"Falha ao desenhar gráfico: {_e}")
 
-    # Legenda/explicação das cores
     _st.markdown(
         "**Legenda:** 🔴 ALTA (z_rob ≥ 3) • 🟠 MÉDIA (2 ≤ z_rob < 3) • 🟡 BAIXA (0 ≤ z_rob < 2) • ⚪ Inconclusivo (amostra mínima não atendida ou variância muito baixa)."
     )
@@ -2246,7 +2235,6 @@ def _render_suspeitas_panel(df):
         "Sempre considerar contexto (ex.: linhas escolares/hospitalares tendem a ter mais gratuidades legítimas)."
     )
 
-# Renderização segura usando df filtrado
 try:
     _df_base = df_filtered.copy() if 'df_filtered' in globals() else df.copy()
     _render_suspeitas_panel(_df_base)
