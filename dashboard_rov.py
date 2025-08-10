@@ -2073,6 +2073,7 @@ except Exception as _e:
 
 
 
+
 # === PAINEL DE SUSPEITAS: GRATUIDADES POR MOTORISTA ===
 import pandas as _pd
 import numpy as _np
@@ -2105,16 +2106,14 @@ def _sus_detect_cols(df):
 
     return driver_col, line_col, pay_present, grat_cols
 
-def _sus_robust_stats(s):
-    s = _pd.to_numeric(s, errors="coerce").dropna()
+def _sus_robust_baseline(series):
+    s = _pd.to_numeric(series, errors="coerce").dropna()
     if s.empty:
-        return _np.nan, _np.nan, _np.nan, _np.nan
-    q1, q2, q3 = s.quantile([0.25, 0.5, 0.75])
-    iqr = q3 - q1 if (q3 - q1) != 0 else _np.nan
-    mad = (s - q2).abs().median()
-    madn = 1.4826 * mad if (mad is not None and mad > 0) else _np.nan
-    std = s.std(ddof=0)
-    return q2, iqr, madn, std
+        return _np.nan, _np.nan
+    med = s.median()
+    mad = (s - med).abs().median()
+    madn = 1.4826 * mad if mad and mad > 0 else _np.nan
+    return med, madn
 
 def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
     if df is None or df.empty:
@@ -2141,50 +2140,59 @@ def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
         gratuidades=("_grat","sum"),
     ).reset_index()
 
-    # Razão de interesse com nome SEM barra para evitar KeyError
+    # Garante a coluna de razão SEM barra para evitar KeyError
     agg["grat_pag_ratio"] = _np.where(agg["pagantes"]>0, agg["gratuidades"]/agg["pagantes"], _np.nan)
+    if "grat_pag_ratio" not in agg.columns:
+        agg["grat_pag_ratio"] = _np.nan
 
     # Filtros mínimos para significância
     agg = agg[(agg["viagens"] >= int(min_trips)) & (agg["pagantes"] >= float(min_pag))]
     if agg.empty:
         return agg, "Sem grupos com amostragem mínima (ajuste os limiares)."
 
-    # Baseline robusto por linha (mediana + MADN) ou global
+    # Baseline robusto (por linha ou global), com transform para evitar merges
     if baseline == "linha" and lin:
-        base = agg.groupby(lin)["grat_pag_ratio"].apply(
-            lambda s: _pd.Series(_sus_robust_stats(s), index=["mediana","iqr","madn","std"])
-        ).reset_index()
-        agg = agg.merge(base, on=lin, how="left")
-        agg["z_rob"] = (agg["grat_pag_ratio"] - agg["mediana"]) / agg["madn"].replace({0:_np.nan})
+        med = agg.groupby(lin)["grat_pag_ratio"].transform(lambda s: _pd.to_numeric(s, errors="coerce").median())
+        madn = agg.groupby(lin)["grat_pag_ratio"].transform(
+            lambda s: (lambda m, s2: (1.4826 * (s2 - m).abs().median()) if _pd.notna(m) else _np.nan)(
+                _pd.to_numeric(s, errors="coerce").median(),
+                _pd.to_numeric(s, errors="coerce")
+            )
+        )
     else:
-        med, iqr, madn, std = _sus_robust_stats(agg["grat_pag_ratio"])
-        agg["mediana"] = med; agg["iqr"] = iqr; agg["madn"] = madn; agg["std"] = std
-        agg["z_rob"] = (agg["grat_pag_ratio"] - med) / (madn if (madn is not None and madn>0) else _np.nan)
+        gsr = _pd.to_numeric(agg["grat_pag_ratio"], errors="coerce")
+        med_val, madn_val = _sus_robust_baseline(gsr)
+        med = _pd.Series(med_val, index=agg.index)
+        madn = _pd.Series(madn_val, index=agg.index)
 
-    # Regras de suspeita (legenda/cores)
-    def level(z):
-        if _np.isnan(z): return "inconclusivo"
+    # z-score robusto com proteção contra divisão por zero
+    denom = madn.replace({0:_np.nan})
+    agg["z_rob"] = ( _pd.to_numeric(agg["grat_pag_ratio"], errors="coerce") - _pd.to_numeric(med, errors="coerce") ) / denom
+
+    # Níveis e badges
+    def _lvl(z):
+        if _pd.isna(z): return "inconclusivo"
         if z >= 3: return "ALTA"
         if z >= 2: return "MÉDIA"
         return "BAIXA"
+    def _badge(s):
+        return {"ALTA":"🔴 ALTA", "MÉDIA":"🟠 MÉDIA", "BAIXA":"🟡 BAIXA", "inconclusivo":"⚪ Inconclusivo"}.get(s, "⚪ Inconclusivo")
 
-    def badge(level):
-        return {"ALTA":"🔴 ALTA", "MÉDIA":"🟠 MÉDIA", "BAIXA":"🟡 BAIXA", "inconclusivo":"⚪ Inconclusivo"}.get(level, "⚪ Inconclusivo")
-
-    agg["Suspeita"] = agg["z_rob"].apply(level)
-    agg["Sinal"] = agg["Suspeita"].apply(badge)
-    agg["% grat/pag"] = (agg["grat_pag_ratio"]*100).round(2)
+    agg["Suspeita"] = agg["z_rob"].apply(_lvl)
+    agg["Sinal"] = agg["Suspeita"].apply(_badge)
+    agg["% grat/pag"] = (_pd.to_numeric(agg["grat_pag_ratio"], errors="coerce")*100).round(2)
 
     order = _pd.CategoricalDtype(categories=["ALTA","MÉDIA","BAIXA","inconclusivo"], ordered=True)
     agg["Suspeita"] = agg["Suspeita"].astype(order)
     agg = agg.sort_values(["Suspeita","z_rob","% grat/pag"], ascending=[True, False, False])
 
-    out_cols = []
-    out_cols.append(drv)
-    if lin: out_cols.append(lin)
-    out_cols += ["viagens","pagantes","gratuidades","% grat/pag","z_rob","Sinal"]
+    # Seleção e nomes finais
+    out_cols = [drv] + ([lin] if lin else []) + ["viagens","pagantes","gratuidades","% grat/pag","z_rob","Sinal"]
     out = agg[out_cols].copy()
-    out.rename(columns={drv:"Motorista", (lin or "Linha"):"Linha"}, inplace=True, errors="ignore")
+    if drv in out.columns:
+        out.rename(columns={drv:"Motorista"}, inplace=True)
+    if lin and lin in out.columns:
+        out.rename(columns={lin:"Linha"}, inplace=True)
     return out, None
 
 def _render_suspeitas_panel(df):
@@ -2204,7 +2212,8 @@ def _render_suspeitas_panel(df):
     baseline_key = "linha" if baseline.startswith("Por linha") else "global"
     topn = int(_st.sidebar.number_input("Top N por suspeita", min_value=5, max_value=100, value=20, step=5))
 
-    tbl, warn = _sus_compute_table(df, min_trips=min_trips, min_pag=min_pag, baseline=baseline_key)
+    base_df = df.copy()
+    tbl, warn = _sus_compute_table(base_df, min_trips=min_trips, min_pag=min_pag, baseline=baseline_key)
     if warn:
         _st.info(warn); return
     if tbl.empty:
@@ -2216,7 +2225,6 @@ def _render_suspeitas_panel(df):
     try:
         level_color = {"ALTA":"#ef4444","MÉDIA":"#f97316","BAIXA":"#facc15","inconclusivo":"#9ca3af"}
         chart = tbl.head(topn).copy()
-        # tenta inferir nível a partir do texto do badge (Sinal)
         chart["Nivel"] = chart["Sinal"].str.split().str[-1].map({"ALTA":"ALTA","MÉDIA":"MÉDIA","BAIXA":"BAIXA"}).fillna("BAIXA")
         chart["Cor"] = chart["Nivel"].map(level_color)
         x = chart["Motorista"] if "Motorista" in chart.columns else chart.iloc[:,0]
