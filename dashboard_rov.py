@@ -34,7 +34,6 @@ except Exception:
 
 try:
     from prophet import Prophet  # pip install prophet
-from pandas.api.types import is_datetime64_any_dtype as is_dt64
     _HAS_PROPHET = True
 except Exception:
     _HAS_PROPHET = False
@@ -231,14 +230,27 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
 # Carregamento de dados
 # ------------------------------
 @st.cache_data(show_spinner=False)
-def load_data(csv_path: str) -> pd.DataFrame:
-    """Carrega o CSV (sep=';'), normaliza tipos e deriva colunas úteis."""
+def load_data(csv: object) -> pd.DataFrame:
+    """Carrega o CSV (sep=';'), normaliza tipos e deriva colunas úteis.
+
+    Aceita tanto um caminho de arquivo (str) quanto um objeto semelhante a arquivo
+    retornado pelo st.file_uploader. Tenta diferentes codificações para abrir o
+    arquivo e lança um erro se nenhuma delas for válida.
+    """
     encodings = ["utf-8", "latin-1"]
     last_err = None
-    df = None
+    df: Optional[pd.DataFrame] = None
     for enc in encodings:
         try:
-            df = pd.read_csv(csv_path, sep=";", encoding=enc)
+            # Se for um objeto de arquivo, reposiciona o cursor no início antes de ler
+            if hasattr(csv, "read"):
+                try:
+                    csv.seek(0)
+                except Exception:
+                    pass
+                df = pd.read_csv(csv, sep=";", encoding=enc)
+            else:
+                df = pd.read_csv(csv, sep=";", encoding=enc)
             break
         except Exception as e:
             last_err = e
@@ -503,15 +515,15 @@ def apply_veic_vigente(df_in: pd.DataFrame, store: dict) -> pd.DataFrame:
 # ------------------------------
 # Entrada do arquivo
 # ------------------------------
-DEFAULT_PATH = os.path.join(os.getcwd(), "dados_ROV.csv")
 st.sidebar.title("⚙️ Configurações")
-csv_path = st.sidebar.text_input("Arquivo de dados (CSV ';')", DEFAULT_PATH)
-if not os.path.exists(csv_path):
-    st.error(f"Arquivo não encontrado: {csv_path}")
+# Campo para upload de arquivo CSV pelo usuário
+uploaded_file = st.sidebar.file_uploader("Carregue o arquivo de dados (CSV ';')", type=["csv"])
+if uploaded_file is None:
+    st.sidebar.info("Por favor, faça upload do arquivo CSV.")
     st.stop()
 
 with st.spinner("Carregando dados..."):
-    df = load_data(csv_path)
+    df = load_data(uploaded_file)
 
 st.title("📊 Dashboard Operacional ROV")
 st.caption("*Baseado exclusivamente nas colunas existentes do arquivo `dados_ROV.csv`*")
@@ -656,16 +668,6 @@ df = apply_veic_vigente(df, veic_store)
 # ------------------------------
 st.sidebar.header("Filtros")
 df_filtered = df.copy()
-
-# Renderiza o novo topo de KPIs (2x3)
-try:
-    _render_top_kpis(df_filtered if 'df_filtered' in globals() else df)
-except Exception as _e:
-    try:
-        st.warning(f"Falha ao renderizar KPIs do topo: {_e}")
-    except Exception:
-        pass
-
 
 # Período
 if "Data Coleta" in df_filtered.columns and df_filtered["Data Coleta"].notna().any():
@@ -1554,14 +1556,24 @@ if "Nome Linha" in df_filtered.columns:
     viagens_total_tbl = grp.size()
     grat_tbl          = grp["Quant Gratuidade"].sum(numeric_only=True) if "Quant Gratuidade" in base_tbl.columns else pd.Series(0.0, index=grp.size().index)
 
+    # Colunas de pagantes (inclui integrações) + fallback por regex
     paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
+    integration_cols_all = ["Quant Passagem Integracao","Quant Passe Integracao","Quant Vale Transporte Integracao",
+                            "Quant Passagem Integração","Quant Passe Integração","Quant Vale Transporte Integração"]
     present_paying_l = [c for c in paying_cols_all if c in base_tbl.columns]
-    if present_paying_l:
-        pag_by_cols_tbl = grp[present_paying_l].sum(numeric_only=True)
+    present_integration_l = [c for c in integration_cols_all if c in base_tbl.columns]
+    # Fallback: qualquer coluna numérica com "Quant" e termos de pagantes (exclui gratuidade)
+    regex_candidates = [c for c in base_tbl.columns if re.search(r"(?i)quant.*(inteir|passag|passe|vale|vt|integra)", c) and not re.search(r"(?i)grat", c)]
+    candidate_cols = []
+    # mantém ordem e remove duplicados
+    for c in present_paying_l + present_integration_l + regex_candidates:
+        if c not in candidate_cols:
+            candidate_cols.append(c)
+    if candidate_cols:
+        pag_by_cols_tbl = grp[candidate_cols].sum(numeric_only=True)
         pagantes_tbl = pag_by_cols_tbl.sum(axis=1)
     else:
         pagantes_tbl = pd.Series(0.0, index=grp.size().index)
-
     receita_tar_l_tbl = pagantes_tbl * float(tarifa_usuario)
     subsidio_l_tbl    = pagantes_tbl * float(subsidio_pagante)
     receita_tot_l_tbl = receita_tar_l_tbl + subsidio_l_tbl
@@ -1592,6 +1604,9 @@ if "Nome Linha" in df_filtered.columns:
         "R$ Rec. p/ Km rodado": rec_por_km_tbl,
         "Pass. Tot. p/ Viagem": pax_tot_viag_tbl,
         "Pass. Pag. p/ Viagem": pag_viag_tbl,
+        "R$ Receita Total": receita_tot_l_tbl,
+        "Tot. Viagens": viagens_total_tbl,
+        "Viagens p/ Veic": (viagens_total_tbl / veic_ids_uni_tbl.replace(0, np.nan)),
     }).reset_index().rename(columns={"Nome Linha":"Nome Linha"})
 
     # ===== Totalização =====
@@ -1631,6 +1646,9 @@ if "Nome Linha" in df_filtered.columns:
         "R$ Rec. p/ Km rodado": total_rec_por_km,
         "Pass. Tot. p/ Viagem": total_pax_tot_viag,
         "Pass. Pag. p/ Viagem": total_pag_viag,
+        "R$ Receita Total": total_receita_sum,
+        "Tot. Viagens": total_viagens_sum,
+        "Viagens p/ Veic": (total_viagens_sum / total_veic_ids_sum) if total_veic_ids_sum else np.nan,
     }])
 
     tabela = tabela.sort_values(by="R$ Rec. p/ Km rodado", ascending=False, na_position="last")
@@ -1650,7 +1668,7 @@ if "Nome Linha" in df_filtered.columns:
         "Pass. Transp.", "Pass. Pag.", "IPK Total", "IPK Pag.",
         "R$ Rec. p/ Veic. Conf.", "R$ Rec. p/ Pass Tot.", "R$ Rec. p/ Km rodado",
         "Pass. Tot. p/ Viagem", "Pass. Pag. p/ Viagem"
-    ]
+    , "R$ Receita Total", "Tot. Viagens", "Viagens p/ Veic"]
 
     formatters = {
         "Veículos Conf.": lambda v: fmt_float(v, 2),
@@ -1668,6 +1686,9 @@ if "Nome Linha" in df_filtered.columns:
         "R$ Rec. p/ Km rodado": lambda v: fmt_currency(v, 2),
         "Pass. Tot. p/ Viagem": lambda v: fmt_float(v, 2),
         "Pass. Pag. p/ Viagem": lambda v: fmt_float(v, 2),
+        "R$ Receita Total": lambda v: fmt_currency(v, 2),
+        "Tot. Viagens": lambda v: fmt_int(v),
+        "Viagens p/ Veic": lambda v: fmt_float(v, 2),
     }
 
     try:
@@ -1874,11 +1895,9 @@ if ai_cluster:
             except Exception as e:
                 st.error(f"Falha na clusterização: {e}")
 
-
-
-# === TOP KPIs (colored cards + sparklines) ====================================
-import re as _re
-import plotly.graph_objects as _go
+# ===================================================================
+# ### 🚚 Aproveitamento da Frota (KPIs + por linha)
+# ===================================================================
 import pandas as _pd
 import numpy as _np
 try:
@@ -1886,241 +1905,167 @@ try:
 except Exception:
     _st = None
 
-def _kpi_fmt_int(v):
-    try:
-        return f"{int(round(float(v))):,}".replace(",", ".")
-    except Exception:
-        return "0"
-
-def _kpi_fmt_float(v, dec=2):
-    try:
-        s = f"{float(v):,.{dec}f}"
-        return s.replace(",", "X").replace(".", ",").replace("X", ".")
-    except Exception:
-        return "0,00"
-
-def _kpi_fmt_currency(v, dec=2):
-    try:
-        s = f"R$ {float(v):,.{dec}f}"
-        return s.replace(",", "X").replace(".", ",").replace("X", ".")
-    except Exception:
-        return "R$ 0,00"
-
-def _kpi_to_dt(series):
-    return _pd.to_datetime(series, errors="coerce")
-
-def _kpi_first(df, names):
+def _first_present(df, names):
     for n in names:
         if n in df.columns:
             return n
     return None
 
-def _kpi_daily(df):
-    d = df.copy()
-    date_col = _kpi_first(d, ["Data","Data Coleta","DataColeta"]) or "Data"
-    d[date_col] = _kpi_to_dt(d[date_col])
-    d = d.dropna(subset=[date_col])
-    d["__date"] = d[date_col].dt.date
-    return d, "__date"
+def _to_dt(series):
+    return _pd.to_datetime(series, errors="coerce")
 
-def _kpi_pagantes(df):
-    paying = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
-    integ  = ["Quant Passagem Integracao","Quant Passe Integracao","Quant Vale Transporte Integracao",
-              "Quant Passagem Integração","Quant Passe Integração","Quant Vale Transporte Integração"]
-    regex  = [c for c in df.columns if _pd.api.types.is_numeric_dtype(df[c])
-              and _re.search(r"(?i)quant.*(inteir|passag|passe|vale|vt|integra)", c)
-              and not _re.search(r"(?i)grat", c)]
-    cols, seen = [], set()
-    for c in paying + integ + regex:
-        if c in df.columns and c not in seen:
-            cols.append(c); seen.add(c)
-    if not cols: return _pd.Series(0, index=df.index)
-    return _pd.to_numeric(df[cols], errors="coerce").fillna(0).sum(axis=1)
 
-def _kpi_gratuitos(df):
-    grat = [c for c in df.columns if _re.search(r"(?i)grat", c)]
-    if not grat: return _pd.Series(0, index=df.index)
-    return _pd.to_numeric(df[grat], errors="coerce").fillna(0).sum(axis=1)
+def _calc_aproveitamento(df):
+    """
+    Calcula KPIs gerais e tabela por linha de aproveitamento da frota.
+    ATENÇÃO: KPIs agora são calculados em nível de SISTEMA por dia,
+    evitando médias de médias que distorcem valores.
+    Retorna (kpis_dict, tabela_por_linha DataFrame).
+    """
+    import pandas as _pd
+    import numpy as _np
 
-def _kpi_receita_total(df):
-    if "Receita Total" in df.columns:
-        return _pd.to_numeric(df["Receita Total"], errors="coerce").fillna(0)
-    if "Receita" in df.columns:
-        return _pd.to_numeric(df["Receita"], errors="coerce").fillna(0)
-    pag = _kpi_pagantes(df)
-    tarifa_cols = [c for c in df.columns if _re.search(r"(?i)tarifa|valor\s*pass", c)]
-    if tarifa_cols:
-        tarifas = _pd.concat([_pd.to_numeric(df[c], errors="coerce") for c in tarifa_cols], axis=1).mean(axis=1).fillna(0)
+    if df is None or df.empty:
+        return {}, _pd.DataFrame()
+
+    col_linha = _first_present(df, ["Nome Linha","Linha"])
+    col_veic  = _first_present(df, ["Numero Veiculo","Nº Veiculo","Veiculo","Veículo"])
+    col_data  = _first_present(df, ["Data","Data Coleta","DataColeta"])
+    col_ini   = _first_present(df, ["Data Hora Inicio Operacao","Data Hora Início Operação","Inicio Operacao","Início Operação","Hora Inicio","DataHoraInicio"])
+    col_fim   = _first_present(df, ["Data Hora Final Operacao","Data Hora Final Operação","Fim Operacao","Hora Final","DataHoraFim"])
+
+    if any(c is None for c in [col_linha, col_veic, col_data, col_ini, col_fim]):
+        return {"erro":"Colunas de linha/veículo/horários ausentes"}, _pd.DataFrame()
+
+    dff = df.copy()
+    dff[col_data] = _to_dt(dff[col_data])
+    dff[col_ini]  = _to_dt(dff[col_ini])
+    dff[col_fim]  = _to_dt(dff[col_fim])
+    dff["_horas"] = ((dff[col_fim] - dff[col_ini]).dt.total_seconds() / 3600.0).fillna(0)
+
+    # ----- Séries diárias (nível sistema) -----
+    # Horas totais por dia (somando todas as viagens/veículos)
+    daily_hours = dff.groupby(col_data)["_horas"].sum(min_count=1)
+    dias_ativos = int(daily_hours.index.nunique())
+
+    # Veículos operando por dia (distintos)
+    daily_oper = dff.groupby(col_data)[col_veic].nunique()
+
+    # Veículos configurados por dia:
+    #  - Se houver coluna de config, somamos a config por linha ao dia e tiramos média entre dias
+    #  - Senão, aproximamos pela "capacidade" do sistema como soma do pico (máximo diário) por linha
+    veic_cfg_col = _first_present(dff, [c for c in dff.columns if "cfg" in c.lower() and "veic" in c.lower()] + ["Veiculos_cfg","Veículos_cfg"])
+
+    if veic_cfg_col:
+        daily_cfg = dff.groupby([col_data, col_linha])[veic_cfg_col].mean().groupby(level=0).sum(min_count=1)
+        veic_cfg_med = float(daily_cfg.mean()) if not daily_cfg.empty else 0.0
     else:
-        tarifas = 0
-    subs_cols = [c for c in df.columns if _re.search(r"(?i)subs[ií]dio|subsidio", c)]
-    subs = _pd.to_numeric(df[subs_cols[0]], errors="coerce").fillna(0) if subs_cols else 0
-    return (pag * tarifas) + subs
+        per_line_daily = dff.groupby([col_linha, col_data])[col_veic].nunique()
+        per_line_peak  = per_line_daily.groupby(level=0).max()  # pico por linha no período
+        cfg_total_cap  = float(per_line_peak.sum()) if not per_line_peak.empty else 0.0
+        veic_cfg_med   = cfg_total_cap  # aproxima como capacidade estável
+        daily_cfg      = _pd.Series(cfg_total_cap, index=daily_hours.index) if dias_ativos else _pd.Series(dtype=float)
 
-def _kpi_dist(df):
-    km_cols = [c for c in df.columns if _re.search(r"(?i)\bkm\b|quil[oô]metr", c)]
-    if not km_cols: return _pd.Series(0, index=df.index)
-    return _pd.to_numeric(df[km_cols[0]], errors="coerce").fillna(0)
+    # KPIs em nível de sistema (médias por dia)
+    horas_totais     = float(daily_hours.sum())                         # total no período
+    horas_dia_media  = float(daily_hours.mean()) if dias_ativos else 0  # média diária
+    veic_med_op      = float(daily_oper.mean()) if dias_ativos else 0
+    horas_por_cfg    = (horas_dia_media / veic_cfg_med) if veic_cfg_med else 0.0
+    horas_por_oper   = (horas_dia_media / veic_med_op) if veic_med_op else 0.0
+    ratio_oper_cfg   = (veic_med_op / veic_cfg_med) if veic_cfg_med else 0.0
+    # Limita ratio em 120% para evitar outliers visuais por ruído de dados
+    ratio_oper_cfg   = float(min(ratio_oper_cfg, 1.2))
 
-def _kpi_compute(df):
-    d, dcol = _kpi_daily(df)
-    # Séries diárias
-    pag_day = _kpi_pagantes(d).groupby(d[dcol]).sum(min_count=1)
-    pax_day = (pag_day + _kpi_gratuitos(d).groupby(d[dcol]).sum(min_count=1))
-    trips_day = d.groupby(d[dcol]).size()
-    dist_day = _kpi_dist(d).groupby(d[dcol]).sum(min_count=1)
-    rec_day = _kpi_receita_total(d).groupby(d[dcol]).sum(min_count=1)
-
-    total_pax = float(pax_day.sum())
-    total_trips = int(trips_day.sum())
-    total_dist = float(dist_day.sum())
-    rec_total = float(rec_day.sum())
-    pax_per_trip = (total_pax/total_trips) if total_trips else 0.0
-    ipk_pag = (float(pag_day.sum())/total_dist) if total_dist else 0.0
-
-    veic_col = _kpi_first(df, ["Numero Veiculo","Nº Veiculo","Veiculo","Veículo"])
-    linha_col = _kpi_first(df, ["Nome Linha","Linha"])
-    veic_ids = df[veic_col].nunique() if veic_col else 0
-    linhas_ativas = df[linha_col].nunique() if linha_col else 0
-
-    oper_day = d.groupby(d[dcol])[veic_col].nunique() if veic_col else _pd.Series(0, index=pax_day.index)
-    cfg_col = _kpi_first(df, [c for c in df.columns if "cfg" in c.lower() and "veic" in c.lower()] + ["Veiculos_cfg","Veículos_cfg"])
-    if cfg_col:
-        cfg_day = d.groupby(d[dcol])[cfg_col].mean()
-    else:
-        if linha_col and veic_col:
-            per_line_daily = d.groupby([linha_col, d[dcol]])[veic_col].nunique()
-            per_line_peak = per_line_daily.groupby(level=0).max()
-            cap = float(per_line_peak.sum()) if not per_line_peak.empty else 0.0
-        else:
-            cap = float(oper_day.max() if len(oper_day) else 0.0)
-        cfg_day = _pd.Series(cap, index=oper_day.index)
-    ratio_day = (oper_day / cfg_day.replace(0, _np.nan)).clip(upper=1.2)
-
-    return {
-        "pax": (total_pax, pax_day),
-        "trips": (total_trips, trips_day),
-        "dist": (total_dist, dist_day),
-        "pax_trip": (pax_per_trip, (pax_day / trips_day.replace(0,_np.nan))),
-        "rec": (rec_total, rec_day),
-        "ipk_pag": (ipk_pag, (pag_day / dist_day.replace(0,_np.nan))),
-        "veic_ids": (veic_ids, oper_day),
-        "linhas": (linhas_ativas, None),
-        "ratio_op_cfg": (float((oper_day.mean() / cfg_day.mean()) if cfg_day.mean() else 0.0), ratio_day),
+    kpis = {
+        "horas_totais": horas_totais,
+        "dias_ativos": dias_ativos,
+        "veic_med_op": veic_med_op,
+        "veic_cfg_med": veic_cfg_med,
+        "horas_dia_media": horas_dia_media,
+        "horas_por_cfg": horas_por_cfg,
+        "horas_por_oper": horas_por_oper,
+        "ratio_oper_cfg": ratio_oper_cfg,
     }
 
-def _kpi_delta(series, window=7, mode="window"):
-    s = series.dropna() if series is not None else _pd.Series(dtype=float)
-    if s.empty: return 0.0
-    if mode=="previous":
-        if len(s) < window*2: mode="window"
-        last = float(s.iloc[-window:].mean())
-        prev = float(s.iloc[-2*window:-window].mean()) if len(s) >= window*2 else float(s.mean())
+    # ---- Tabela por linha (mantém lógica robusta) ----
+    grp = dff.groupby(col_linha, dropna=False)
+    horas_totais_l = grp["_horas"].sum().rename("Horas totais")
+    dias_ativos_l  = grp[col_data].nunique().rename("Dias ativos")
+
+    def _vm(g):
+        return g.groupby(col_data)[col_veic].nunique().mean()
+    veic_med_op_l = dff.groupby(col_linha).apply(_vm).rename("Veic. médios operação/dia")
+
+    if veic_cfg_col:
+        veic_cfg_med_l = dff.groupby([col_linha, col_data])[veic_cfg_col].mean().groupby(level=0).mean().rename("Veic. configurados (média)")
     else:
-        last = float(s.tail(window).mean())
-        prev = float(s.mean())
-    if prev == 0 or _np.isnan(prev): return 0.0
-    return (last - prev) / prev
+        veic_cfg_med_l = dff.groupby(col_linha).apply(lambda g: g.groupby(col_data)[col_veic].nunique().max()).rename("Veic. configurados (média)")
 
-def _kpi_spark(series):
-    fig = _go.Figure()
-    if series is not None and not series.dropna().empty:
-        s = series.dropna()
-        fig.add_scatter(x=s.index, y=s.values, mode="lines")
-    fig.update_layout(height=54, margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-    fig.update_xaxes(visible=False); fig.update_yaxes(visible=False)
-    return fig
+    base = _pd.concat([horas_totais_l, dias_ativos_l, veic_med_op_l, veic_cfg_med_l], axis=1).reset_index()
+    base["Horas/dia (média)"] = base.apply(lambda r: (r["Horas totais"]/r["Dias ativos"]) if r["Dias ativos"] else 0, axis=1)
+    base["Horas/dia por veic. cfg"] = base.apply(lambda r: (r["Horas/dia (média)"]/r["Veic. configurados (média)"]) if r["Veic. configurados (média)"] else 0, axis=1)
+    base["Horas/dia por veic. oper. méd."] = base.apply(lambda r: (r["Horas/dia (média)"]/r["Veic. médios operação/dia"]) if r["Veic. médios operação/dia"] else 0, axis=1)
+    base["Operação vs Config (ratio)"] = base.apply(lambda r: (r["Veic. médios operação/dia"]/r["Veic. configurados (média)"]) if r["Veic. configurados (média)"] else 0, axis=1)
 
-def _render_top_kpis(df):
-    if _st is None: return
-    series = _kpi_compute(df)
+    base = base.sort_values(["Operação vs Config (ratio)", "Horas/dia (média)"], ascending=False)
+    return kpis, base
 
-    _st.sidebar.subheader("Aparência dos KPIs")
-    show_sparks = _st.sidebar.checkbox("Mostrar sparklines", True)
-    compare_opt = _st.sidebar.selectbox("Comparar vs", ["Últimos 7 dias","Últimos 14 dias","Últimos 28 dias","Período anterior"], index=0)
-    if compare_opt.startswith("Últimos"):
-        window = int(compare_opt.split()[1]); mode="window"
-    else:
-        window = 7; mode="previous"
-
-    palette = {"op":"#2563eb","fin":"#16a34a","frota":"#7c3aed","mot":"#f59e0b"}
-
-    _st.markdown(
-        """
-        <style>
-        .kpi-card{border-radius:16px;padding:14px 16px;background:rgba(255,255,255,0.04);
-                  border:1px solid rgba(255,255,255,0.08);box-shadow:0 6px 16px rgba(0,0,0,0.24)}
-        .kpi-title{font-weight:700;opacity:.9;font-size:0.95rem}
-        .kpi-value{font-size:1.8rem;margin-top:4px;margin-bottom:4px}
-        .kpi-delta{font-size:0.85rem;opacity:.85}
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
-    def card(col, title, value, color_key, series_x=None, fmt="int", suffix=""):
-        with col:
-            _st.markdown(f"<div class='kpi-title'>{title}</div>", unsafe_allow_html=True)
-            if fmt=="int": val_fmt = _kpi_fmt_int(value)
-            elif fmt=="float": val_fmt = _kpi_fmt_float(value, 2)
-            elif fmt=="currency": val_fmt = _kpi_fmt_currency(value, 2)
-            else: val_fmt = str(value)
-            _st.markdown(f"<div class='kpi-value' style='color:{palette[color_key]}'>{val_fmt}{suffix}</div>", unsafe_allow_html=True)
-            if series_x is not None:
-                delta = _kpi_delta(series_x, window, mode)
-                badge = "🟢" if delta >= 0.02 else ("🟡" if delta > -0.02 else "🔴")
-                _st.markdown(f"<div class='kpi-delta'>{badge} Δ {delta*100:.1f}%</div>", unsafe_allow_html=True)
-            if show_sparks and series_x is not None:
-                _st.plotly_chart(_kpi_spark(series_x), use_container_width=True, config={"displayModeBar": False})
-
-    # Row 1
-    r1 = _st.columns(3)
-    card(r1[0], "🧍 Passageiros", series["pax"][0], "op", series["pax"][1], "int")
-    card(r1[1], "🧾 Viagens registradas", series["trips"][0], "op", series["trips"][1], "int")
-    card(r1[2], "👥 Média pax/viagem", series["pax_trip"][0], "op", series["pax_trip"][1], "float")
-
-    # Row 2
-    r2 = _st.columns(3)
-    card(r2[0], "💰 Receita total", series["rec"][0], "fin", series["rec"][1], "currency")
-    card(r2[1], "📈 IPK pagantes (pax/km)", series["ipk_pag"][0], "fin", series["ipk_pag"][1], "float")
-    ratio_val, ratio_series = series["ratio_op_cfg"]
-    with r2[2]:
-        pct = f"{max(0.0, min(1.2, float(ratio_val)))*100:.1f}%"
-        badge = "🟢" if ratio_val >= 0.9 else ("🟡" if ratio_val >= 0.75 else "🔴")
-        _st.markdown(f"<div class='kpi-title'>🚌 Operação vs Config</div>", unsafe_allow_html=True)
-        _st.markdown(f"<div class='kpi-value' style='color:{palette['frota']}'>{badge} {pct}</div>", unsafe_allow_html=True)
-        if show_sparks and ratio_series is not None:
-            _st.plotly_chart(_kpi_spark(ratio_series), use_container_width=True, config={"displayModeBar": False})
-# === END TOP KPIs =============================================================
-
-
-# ========= HOTFIX: normalização robusta de datas =========
-def _ensure_datetime_columns(df):
-    try:
-        date_cols = [
-            "Data", "Data Coleta", "DataColeta",
-            "Data Hora Inicio Operacao", "Data Hora Início Operação", "Inicio Operacao", "Início Operação", "Hora Inicio", "DataHoraInicio",
-            "Data Hora Final Operacao", "Data Hora Final Operação", "Fim Operacao", "Hora Final", "DataHoraFim"
-        ]
-        for c in date_cols:
-            if c in df.columns:
-                try:
-                    if 'is_dt64' in globals():
-                        if not is_dt64(df[c]):
-                            df[c] = pd.to_datetime(df[c], errors="coerce", dayfirst=True)
-                    else:
-                        df[c] = pd.to_datetime(df[c], errors="coerce", dayfirst=True)
-                except Exception:
-                    df[c] = pd.to_datetime(df[c], errors="coerce", dayfirst=True)
-    except Exception:
-        pass
-    return df
-
+# ---- Renderização na UI ----
 try:
-    if 'df' in globals() and isinstance(df, pd.DataFrame):
-        df = _ensure_datetime_columns(df)
-    if 'df_filtered' in globals() and isinstance(df_filtered, pd.DataFrame):
-        df_filtered = _ensure_datetime_columns(df_filtered)
-except Exception:
-    pass
-# ========= FIM HOTFIX =========
+    _base_df = df_filtered.copy() if 'df_filtered' in globals() else df.copy()
+
+    # Helpers de formatação
+    def _fmt_h(v, dec=1):
+        try:
+            return f"{v:,.{dec}f} h".replace(",", "X").replace(".", ",").replace("X", ".")
+        except Exception:
+            return "—"
+
+    def _fmt_hhmm(v):
+        try:
+            total_min = int(round(float(v) * 60))
+            hh, mm = divmod(total_min, 60)
+            return f"{hh:02d}:{mm:02d} h"
+        except Exception:
+            return "—"
+
+    def _fmt_pct(v):
+        try:
+            return f"{(float(v)*100):.1f}%"
+        except Exception:
+            return "—"
+
+    if _st: _st.markdown("## 🚚 Aproveitamento da Frota")
+    _kpis, _tbl = _calc_aproveitamento(_base_df)
+
+    if _kpis.get("erro") and _st:
+        _st.info("Não foi possível calcular: " + _kpis["erro"])
+    elif _st:
+        c1,c2,c3 = _st.columns(3)
+        c1.metric("⏱️ Horas totais", _fmt_h(_kpis['horas_totais'], 1), _fmt_hhmm(_kpis['horas_dia_media']))
+        c2.metric("🗓️ Dias ativos", f"{_kpis['dias_ativos']}")
+        c3.metric("🚌 Veic. médios oper./dia", f"{_kpis['veic_med_op']:.1f}")
+
+        c4,c5,c6 = _st.columns(3)
+        c4.metric("🚐 Veic. configurados (média)", f"{_kpis['veic_cfg_med']:.1f}")
+        c5.metric("⏳ Horas/dia por veic. cfg", f"{_kpis['horas_por_cfg']:.2f}")
+        # Badge de status para Operação vs Config
+        ratio = _kpis['ratio_oper_cfg']
+        badge = "🟢" if ratio >= 0.9 else ("🟡" if ratio >= 0.75 else "🔴")
+        c6.metric(f"{badge} Operação vs Config", _fmt_pct(ratio))
+
+        _st.caption("• Delta em 'Horas totais' mostra média diária (formato HH:MM). Cores: 🟢 ≥ 90%, 🟡 75–89%, 🔴 < 75%.")
+
+        _st.markdown("### Por linha")
+        tbl_show = _tbl.copy()
+        if not tbl_show.empty and "Operação vs Config (ratio)" in tbl_show.columns:
+            tbl_show["Operação vs Config (ratio)"] = (tbl_show["Operação vs Config (ratio)"].astype(float).clip(0,1.2))*100.0
+            tbl_show["Operação vs Config (ratio)"] = tbl_show["Operação vs Config (ratio)"].map(lambda v: f"{v:.1f}%")
+        # Formata horas
+        for col in ["Horas totais","Horas/dia (média)","Horas/dia por veic. cfg","Horas/dia por veic. oper. méd."]:
+            if col in tbl_show.columns:
+                tbl_show[col] = tbl_show[col].astype(float).map(lambda v: _fmt_h(v, 2))
+        _st.dataframe(tbl_show, use_container_width=True)
+
+except Exception as _e:
+    if _st: _st.warning(f"Falha ao renderizar 'Aproveitamento da Frota': {_e}")
