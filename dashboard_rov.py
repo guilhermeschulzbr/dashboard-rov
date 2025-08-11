@@ -15,6 +15,30 @@ import plotly.express as px
 import streamlit as st
 from datetime import date
 from io import BytesIO
+# === Helper: encontra/forma o DataFrame base ===
+def _ensure_base_df():
+    try:
+        if 'df' in globals() and isinstance(df, pd.DataFrame):
+            return df
+    except Exception:
+        pass
+    try:
+        if 'df_filtered' in globals() and isinstance(df_filtered, pd.DataFrame):
+            return df_filtered
+    except Exception:
+        pass
+    try:
+        if 'df' in st.session_state and isinstance(st.session_state['df'], pd.DataFrame):
+            return st.session_state['df']
+    except Exception:
+        pass
+    try:
+        if 'load_data' in globals():
+            cp = globals().get('csv_path', None)
+            return load_data(cp) if cp else load_data(None)
+    except Exception:
+        pass
+    return None
 
 # ---- IA (imports opcionais) ----
 try:
@@ -36,36 +60,6 @@ try:
     from prophet import Prophet  # pip install prophet
 
 
-# === Helper: encontra/forma o DataFrame base ===
-def _ensure_base_df():
-    # 1) df já carregado
-    try:
-        if 'df' in globals() and isinstance(df, pd.DataFrame):
-            return df
-    except Exception:
-        pass
-    # 2) df_filtered já existe
-    try:
-        if 'df_filtered' in globals() and isinstance(df_filtered, pd.DataFrame):
-            return df_filtered
-    except Exception:
-        pass
-    # 3) session_state
-    try:
-        import streamlit as st
-        if 'df' in st.session_state and isinstance(st.session_state['df'], pd.DataFrame):
-            return st.session_state['df']
-    except Exception:
-        pass
-    # 4) Função de carga existente
-    try:
-        if 'load_data' in globals():
-            # tenta usar csv_path, se existir
-            cp = globals().get('csv_path', None)
-            return load_data(cp) if cp else load_data(None)
-    except Exception:
-        pass
-    return None
 
 
     _HAS_PROPHET = True
@@ -818,7 +812,7 @@ if modo_visu == "Apenas expurgados":
     if criterio.any():
         df_filtered = df_filtered[criterio]
     else:
-        _st.sidebar.info("Ative pelos menos um critério para visualizar apenas expurgados.")
+        st.sidebar.info("Ative pelos menos um critério para visualizar apenas expurgados.")
 else:
     # Modo normal: removemos os expurgados marcados
     if expurgar_zero:
@@ -2098,7 +2092,7 @@ def _render_trends_financeiro(df):
     if _st is None: return
     series = _tz_daily_series(df)
     st.markdown("## 💹 Tendências — Indicadores Financeiros")
-    win = _st.sidebar.selectbox("Janela de tendência (financeiro)", [7,14,28], index=0, key="win_fin")
+    win = st.sidebar.selectbox("Janela de tendência (financeiro)", [7,14,28], index=0, key="win_fin")
     rec = series["rec_day"]
     trips = series["trips_day"]
     rec_per_trip = (rec / trips.replace(0, _np.nan))
@@ -2119,7 +2113,7 @@ def _render_trends_avancados(df):
     if _st is None: return
     series = _tz_daily_series(df)
     st.markdown("## 🧠 Tendências — Indicadores Avançados")
-    win = _st.sidebar.selectbox("Janela de tendência (avançados)", [7,14,28], index=0, key="win_adv")
+    win = st.sidebar.selectbox("Janela de tendência (avançados)", [7,14,28], index=0, key="win_adv")
     metrics = [
         ("IPK pagantes (pax/km)", series["ipk_pag_day"], False),
         ("Pax por viagem", series["pax_trip_day"], False),
@@ -2138,10 +2132,10 @@ def _render_trends_avancados(df):
 def _render_trends_por_motorista(df):
     if _st is None: return
     st.markdown("## 👤 Tendências — Indicadores por Motorista")
-    win = _st.sidebar.selectbox("Janela de tendência (motorista)", [7,14,28], index=0, key="win_mot")
+    win = st.sidebar.selectbox("Janela de tendência (motorista)", [7,14,28], index=0, key="win_mot")
     name_col = _tz_first(df, ["Cobrador/Operador","Nome Motorista","Motorista","Nome do Motorista","Nome Condutor","Condutor"])
     if not name_col or name_col not in df.columns:
-        _st.info("Coluna de nome do motorista não encontrada (ex.: 'Cobrador/Operador').")
+        st.info("Coluna de nome do motorista não encontrada (ex.: 'Cobrador/Operador').")
         return
 
     def _pag(df_):
@@ -2173,7 +2167,7 @@ def _render_trends_por_motorista(df):
         dlt = _tz_delta(s, win, "previous")
         deltas.append((mot, dlt, s))
     if not deltas:
-        _st.info("Sem dados suficientes por motorista.")
+        st.info("Sem dados suficientes por motorista.")
         return
     deltas.sort(key=lambda x: (x[1] if x[1] is not None else -999), reverse=True)
     top = deltas[:15]
@@ -2201,46 +2195,6 @@ def _render_trends_por_motorista(df):
 
 
 try:
-    # === Importação de CSV (reintroduzida) ==================================
-    st.sidebar.markdown("### 📤 Importar CSV")
-    _up = st.sidebar.file_uploader("Adicionar dados (CSV)", type=["csv"], key="csv_import")
-    def _read_csv_any(fobj):
-        import pandas as _pd_local
-        for enc in ["utf-8", "latin-1", "cp1252"]:
-            try:
-                return _pd_local.read_csv(fobj, sep=None, engine="python", encoding=enc)
-            except Exception:
-                fobj.seek(0)
-        # fallback
-        fobj.seek(0)
-        return _pd_local.read_csv(fobj, encoding_errors="ignore")
-    if _up is not None:
-        df_new = _read_csv_any(_up)
-        # Normaliza nomes das colunas
-        df_new.columns = [str(c).strip() for c in df_new.columns]
-        # Deduplicação por chaves se existirem
-        if 'df' in globals():
-            # chaves candidatas
-            keys = [c for c in ["Data","Data Coleta","DataColeta",
-                                "Nome Linha","Linha",
-                                "Numero Veiculo","Nº Veiculo","Veiculo","Veículo",
-                                "Data Hora Inicio Operacao","Data Hora Início Operação","DataHoraInicio"]
-                    if c in df_new.columns and c in df.columns]
-            df = pd.concat([df, df_new], ignore_index=True)
-            if keys:
-                df.drop_duplicates(subset=keys, inplace=True)
-                _st.sidebar.success(f"Importação concluída. Chaves usadas para dedupe: {', '.join(keys)}")
-            else:
-                df.drop_duplicates(inplace=True)
-                _st.sidebar.info("Importação concluída. Não foram encontradas chaves; dedupe por linha completa.")
-            # Atualiza df_filtered para refletir os novos dados (filtros serão aplicados adiante no app)
-            try:
-                df_filtered = df.copy()
-            except Exception:
-                pass
-        else:
-            _st.sidebar.warning("Estrutura de dados principal (df) não encontrada para mesclar o CSV.")
-    # =========================================================================
 
     # Pequeno diagnóstico (opcional) mostrando colunas-chave detectadas
     with st.expander("🔧 Diagnóstico de tendências (colunas detectadas)"):
@@ -2262,7 +2216,7 @@ except Exception as _e:
         pass
 
     try:
-        _st.warning(f"Tendências: falha na renderização: {_e}")
+        st.warning(f"Tendências: falha na renderização: {_e}")
     except Exception:
         pass
 # === END TRENDS PANELS =========================================================
