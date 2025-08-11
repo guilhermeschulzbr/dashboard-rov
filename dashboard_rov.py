@@ -506,6 +506,54 @@ def apply_veic_vigente(df_in: pd.DataFrame, store: dict) -> pd.DataFrame:
 # ------------------------------
 DEFAULT_PATH = os.path.join(os.getcwd(), "dados_ROV.csv")
 st.sidebar.title("⚙️ Configurações")
+
+
+# === Upload CSV (no início de Configurações) ===============================
+uploaded_csv_cfg = st.sidebar.file_uploader("📤 Fazer upload de arquivo .CSV para incorporar", type=["csv"], key="cfg_csv_upload")
+def _read_csv_guess(file_obj):
+    import pandas as _pd_local
+    # tenta auto-separador e diferentes encodings
+    for enc in ["utf-8", "latin-1", "cp1252"]:
+        try:
+            file_obj.seek(0)
+            return _pd_local.read_csv(file_obj, sep=None, engine="python", encoding=enc)
+        except Exception:
+            continue
+    file_obj.seek(0)
+    return _pd_local.read_csv(file_obj, encoding_errors="ignore")
+if uploaded_csv_cfg is not None:
+    try:
+        df_new = _read_csv_guess(uploaded_csv_cfg)
+        # Normaliza nomes das colunas
+        df_new.columns = [str(c).strip() for c in df_new.columns]
+        # Mescla com df existente
+        if 'df' in globals() and isinstance(df, pd.DataFrame):
+            # chaves candidatas p/ dedupe
+            keys = [c for c in [
+                "Data","Data Coleta","DataColeta",
+                "Nome Linha","Linha",
+                "Numero Veiculo","Nº Veiculo","Veiculo","Veículo",
+                "Data Hora Inicio Operacao","Data Hora Início Operação","DataHoraInicio"
+            ] if (c in df_new.columns and c in df.columns)]
+            df = pd.concat([df, df_new], ignore_index=True)
+            if keys:
+                df.drop_duplicates(subset=keys, inplace=True)
+                st.sidebar.success("CSV importado e incorporado à base (deduplicado por: " + ", ".join(keys) + ").")
+            else:
+                df.drop_duplicates(inplace=True)
+                st.sidebar.info("CSV importado e incorporado (dedupe por linha completa).")
+            # Atualiza df_filtered (filtros serão reprocessados após rerun)
+            try:
+                df_filtered = df.copy()
+            except Exception:
+                pass
+            # Força recarregar a página com os novos dados
+            st.experimental_rerun()
+        else:
+            st.sidebar.warning("DataFrame principal 'df' não encontrado. Não foi possível incorporar o CSV.")
+    except Exception as _e:
+        st.sidebar.error(f"Falha ao importar CSV: {_e}")
+# ==========================================================================
 csv_path = st.sidebar.text_input("Arquivo de dados (CSV ';')", DEFAULT_PATH)
 if not os.path.exists(csv_path):
     st.error(f"Arquivo não encontrado: {csv_path}")
