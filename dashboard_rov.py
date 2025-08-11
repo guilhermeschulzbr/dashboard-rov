@@ -63,7 +63,7 @@ def inject_compact_css(base_font_px=13, table_px=12, metric_value_rem=1.0, metri
     div[data-testid="stMetricLabel"] { font-size: {metric_label_rem}rem !important; }
 
     /* Tabelas (st.dataframe e st.table) */
-    div[data-testid="stDataFrame"] div[role="grid"] * { 
+    div[data-testid="stDataFrame"] div[role="grid"] *, div[role="gridcell"], div[role="rowgroup"] * { 
         font-size: {table_px}px !important; 
         line-height: 1.1 !important;
     }
@@ -88,11 +88,20 @@ def inject_compact_css(base_font_px=13, table_px=12, metric_value_rem=1.0, metri
     </style>
     """, unsafe_allow_html=True)
 
-# Aplica estilo compacto (padrão)
+
+# ---- Controles de aparência (sidebar) ----
 try:
-    inject_compact_css()
+    with st.sidebar.expander("🎛️ Aparência", expanded=True):
+        base_font_px = st.slider("Tamanho base do app (px)", min_value=10, max_value=18, value=13, step=1)
+        table_px = st.slider("Tamanho da fonte nas tabelas (px)", min_value=9, max_value=16, value=12, step=1)
+        metric_value_rem = st.slider("Métrica: tamanho do valor (rem)", min_value=0.7, max_value=1.6, value=1.0, step=0.1)
+        metric_label_rem = st.slider("Métrica: tamanho do rótulo (rem)", min_value=0.6, max_value=1.2, value=0.8, step=0.1)
+        header_scale = st.slider("Cabeçalhos (escala)", min_value=0.6, max_value=1.2, value=0.9, step=0.05)
+    inject_compact_css(base_font_px, table_px, metric_value_rem, metric_label_rem, header_scale)
 except Exception:
-    pass
+    # fallback silencioso
+    inject_compact_css()
+
 
 # ------------------------------
 # Persistência (arquivos JSON na mesma pasta do app)
