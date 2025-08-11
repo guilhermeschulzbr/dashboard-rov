@@ -536,10 +536,11 @@ st.sidebar.title("⚙️ Configurações")
 
 # === Upload CSV (no início de Configurações) ===============================
 
+
 uploaded_csv_cfg = st.sidebar.file_uploader("📤 Fazer upload de arquivo .CSV para incorporar", type=["csv"], key="cfg_csv_upload")
 def _read_csv_guess(file_obj):
     import pandas as _pd_local
-    for enc in ["utf-8", "latin-1", "cp1252"]:
+    for enc in ("utf-8","latin-1","cp1252"):
         try:
             file_obj.seek(0)
             return _pd_local.read_csv(file_obj, sep=None, engine="python", encoding=enc)
@@ -553,12 +554,7 @@ if uploaded_csv_cfg is not None:
         df_new = _read_csv_guess(uploaded_csv_cfg)
         df_new.columns = [str(c).strip() for c in df_new.columns]
         base_df = _ensure_base_df()
-        if base_df is None:
-            # não há df ainda; assume o CSV como base inicial
-            merged = df_new.copy()
-        else:
-            merged = pd.concat([base_df, df_new], ignore_index=True)
-        # Deduplicação por chaves se existirem
+        merged = df_new.copy() if base_df is None else pd.concat([base_df, df_new], ignore_index=True)
         keys = [c for c in [
             "Data","Data Coleta","DataColeta",
             "Nome Linha","Linha",
@@ -571,41 +567,27 @@ if uploaded_csv_cfg is not None:
         else:
             merged.drop_duplicates(inplace=True)
             st.sidebar.info("CSV importado e incorporado (dedupe por linha completa).")
-        # Escreve de volta em globals e session_state para o restante do app usar
         globals()['df'] = merged.copy()
         globals()['df_filtered'] = merged.copy()
         try:
-            import streamlit as st
             st.session_state['df'] = merged.copy()
         except Exception:
             pass
         # limpa caches e força recarga
-        try:
-            st.cache_data.clear()
+        try: st.cache_data.clear()
+        except Exception: pass
+        try: st.cache_resource.clear()
+        except Exception: pass
+        try: st.experimental_memo.clear()
+        except Exception: pass
+        try: st.experimental_singleton.clear()
+        except Exception: pass
+        try: st.rerun()
         except Exception:
-            pass
-        try:
-            st.cache_resource.clear()
-        except Exception:
-            pass
-        try:
-            st.experimental_memo.clear()
-        except Exception:
-            pass
-        try:
-            st.experimental_singleton.clear()
-        except Exception:
-            pass
-        try:
-            st.rerun()
-        except Exception:
-            try:
-                st.experimental_rerun()
-            except Exception:
-                pass
-except Exception as _e:
+            try: st.experimental_rerun()
+            except Exception: pass
+    except Exception as _e:
         st.sidebar.error(f"Falha ao importar CSV: {_e}")
-# =========================================================================="
 
 csv_path = st.sidebar.text_input("Arquivo de dados (CSV ';')", DEFAULT_PATH)
 if not os.path.exists(csv_path):
