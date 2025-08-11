@@ -2113,12 +2113,68 @@ def _render_trends_por_motorista(df):
             _st.plotly_chart(_tz_spark(s), use_container_width=True, config={"displayModeBar": False})
             _st.markdown(f"<div style='font-size:1.0rem;color:{color}'>{arrow} {v*100:.1f}%</div>", unsafe_allow_html=True)
 
+
 try:
+    # === Importação de CSV (reintroduzida) ==================================
+    st.sidebar.markdown("### 📤 Importar CSV")
+    _up = st.sidebar.file_uploader("Adicionar dados (CSV)", type=["csv"], key="csv_import")
+    def _read_csv_any(fobj):
+        import pandas as _pd_local
+        for enc in ["utf-8", "latin-1", "cp1252"]:
+            try:
+                return _pd_local.read_csv(fobj, sep=None, engine="python", encoding=enc)
+            except Exception:
+                fobj.seek(0)
+        # fallback
+        fobj.seek(0)
+        return _pd_local.read_csv(fobj, encoding_errors="ignore")
+    if _up is not None:
+        df_new = _read_csv_any(_up)
+        # Normaliza nomes das colunas
+        df_new.columns = [str(c).strip() for c in df_new.columns]
+        # Deduplicação por chaves se existirem
+        if 'df' in globals():
+            # chaves candidatas
+            keys = [c for c in ["Data","Data Coleta","DataColeta",
+                                "Nome Linha","Linha",
+                                "Numero Veiculo","Nº Veiculo","Veiculo","Veículo",
+                                "Data Hora Inicio Operacao","Data Hora Início Operação","DataHoraInicio"]
+                    if c in df_new.columns and c in df.columns]
+            df = pd.concat([df, df_new], ignore_index=True)
+            if keys:
+                df.drop_duplicates(subset=keys, inplace=True)
+                st.sidebar.success(f"Importação concluída. Chaves usadas para dedupe: {', '.join(keys)}")
+            else:
+                df.drop_duplicates(inplace=True)
+                st.sidebar.info("Importação concluída. Não foram encontradas chaves; dedupe por linha completa.")
+            # Atualiza df_filtered para refletir os novos dados (filtros serão aplicados adiante no app)
+            try:
+                df_filtered = df.copy()
+            except Exception:
+                pass
+        else:
+            st.sidebar.warning("Estrutura de dados principal (df) não encontrada para mesclar o CSV.")
+    # =========================================================================
+
+    # Pequeno diagnóstico (opcional) mostrando colunas-chave detectadas
+    with st.expander("🔧 Diagnóstico de tendências (colunas detectadas)"):
+        sample_df = df_filtered if 'df_filtered' in globals() else df
+        if isinstance(sample_df, pd.DataFrame):
+            cols = list(sample_df.columns)
+            st.write("Colunas disponíveis (amostra):", cols[:40])
+        else:
+            st.write("Dataframe principal indisponível para diagnóstico.")
+
     _base_df = df_filtered.copy() if 'df_filtered' in globals() else df.copy()
     _render_trends_financeiro(_base_df)
     _render_trends_avancados(_base_df)
     _render_trends_por_motorista(_base_df)
 except Exception as _e:
+    try:
+        st.warning(f"Tendências: falha na renderização: {_e}")
+    except Exception:
+        pass
+
     try:
         _st.warning(f"Tendências: falha na renderização: {_e}")
     except Exception:
