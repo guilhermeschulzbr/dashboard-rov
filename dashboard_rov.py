@@ -1882,6 +1882,27 @@ def _tz_first(df, names):
     return None
 
 def _tz_to_dt(s):
+
+def _tz_as_series(x):
+    try:
+        if isinstance(x, _pd.Series):
+            return x
+        if isinstance(x, _pd.DataFrame):
+            num_cols = x.select_dtypes(include="number").columns
+            if len(num_cols) > 0:
+                return x[num_cols[0]]
+            return x.iloc[:,0]
+        # numpy array or list-like
+        try:
+            import numpy as _np_local
+            if isinstance(x, (_np_local.ndarray, list, tuple)):
+                return _pd.Series(x)
+        except Exception:
+            pass
+        # scalar fallback
+        return _pd.Series([x])
+    except Exception:
+        return _pd.Series(dtype=float)
     return _pd.to_datetime(s, errors="coerce", dayfirst=True)
 
 def _tz_daily_series(df):
@@ -1919,14 +1940,14 @@ def _tz_daily_series(df):
         tarifas = _pd.concat([_pd.to_numeric(df_[c], errors="coerce") for c in tarifa_cols], axis=1).mean(axis=1).fillna(0) if tarifa_cols else 0
         return _pag(df_) * tarifas
 
-    veic_col = _tz_first(df, ["Cobrador/Operador","Numero Veiculo","Nº Veiculo","Veiculo","Veículo"])
+    veic_col = _tz_first(d, ["Numero Veiculo","Nº Veiculo","Veiculo","Veículo"])
 
-    pag_day = _pag(d).groupby(d["__d"]).sum(min_count=1)
-    grat_day = _grat(d).groupby(d["__d"]).sum(min_count=1)
+    pag_day = _pag(d).groupby(d["__d"]).sum(min_count=1).sort_index()
+    grat_day = _grat(d).groupby(d["__d"]).sum(min_count=1).sort_index()
     pax_day = (pag_day + grat_day)
     trips_day = d.groupby(d["__d"]).size()
-    dist_day = _dist(d).groupby(d["__d"]).sum(min_count=1)
-    rec_day = _rec(d).groupby(d["__d"]).sum(min_count=1)
+    dist_day = _dist(d).groupby(d["__d"]).sum(min_count=1).sort_index()
+    rec_day = _rec(d).groupby(d["__d"]).sum(min_count=1).sort_index()
     oper_day = d.groupby(d["__d"])[veic_col].nunique() if veic_col else _pd.Series(0, index=pax_day.index)
 
     # cfg estimada (pico por linha) se disponível
@@ -1949,8 +1970,10 @@ def _tz_daily_series(df):
         "ipk_pag_day": ipk_pag_day, "pax_trip_day": pax_trip_day, "ratio_op_cfg_day": ratio_op_cfg_day
     }
 
+
 def _tz_delta(series, window=7, mode="previous"):
-    s = _pd.to_numeric(series, errors="coerce").dropna()
+    s = _tz_as_series(series)
+    s = _pd.to_numeric(s, errors="coerce").dropna()
     if s.empty: return 0.0
     w = max(1, int(window))
     if mode == "previous":
@@ -1979,10 +2002,13 @@ def _tz_arrow_alert(delta):
     if delta < -0.02: return "▼", "#16a34a"
     return "→", "#9ca3af"
 
+
 def _tz_spark(series):
     fig = _go.Figure()
-    s = _pd.to_numeric(series, errors="coerce").dropna()
+    s = _tz_as_series(series)
+    s = _pd.to_numeric(s, errors="coerce").dropna()
     if not s.empty:
+        s = s.sort_index()
         fig.add_scatter(x=s.index, y=s.values, mode="lines")
     fig.update_layout(height=54, margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
     fig.update_xaxes(visible=False); fig.update_yaxes(visible=False)
