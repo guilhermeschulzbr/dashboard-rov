@@ -127,12 +127,12 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
     dfm = df_scope.copy()
     mot_col = "Cobrador/Operador" if "Cobrador/Operador" in dfm.columns else ("Matricula" if "Matricula" in dfm.columns else None)
     if mot_col is None:
-        st.warning("Colunas de motorista não encontradas.")
+        _st.warning("Colunas de motorista não encontradas.")
         return
     dfm = dfm[dfm[mot_col].astype(str) == str(motorista_id)]
 
     if dfm.empty:
-        st.info("Sem dados para o motorista no filtro atual.")
+        _st.info("Sem dados para o motorista no filtro atual.")
         return
 
     # Escolhe coluna de distância
@@ -503,8 +503,8 @@ def apply_veic_vigente(df_in: pd.DataFrame, store: dict) -> pd.DataFrame:
 # Entrada do arquivo
 # ------------------------------
 DEFAULT_PATH = os.path.join(os.getcwd(), "dados_ROV.csv")
-st.sidebar.title("⚙️ Configurações")
-csv_path = st.sidebar.text_input("Arquivo de dados (CSV ';')", DEFAULT_PATH)
+_st.sidebar.title("⚙️ Configurações")
+csv_path = _st.sidebar.text_input("Arquivo de dados (CSV ';')", DEFAULT_PATH)
 if not os.path.exists(csv_path):
     st.error(f"Arquivo não encontrado: {csv_path}")
     st.stop()
@@ -519,7 +519,7 @@ st.caption("*Baseado exclusivamente nas colunas existentes do arquivo `dados_ROV
 # Classificação de Linhas (Urbana/Distrital) com persistência
 # ------------------------------
 if "Nome Linha" in df.columns:
-    st.sidebar.header("Classificação de Linhas")
+    _st.sidebar.header("Classificação de Linhas")
     cfg_categ = load_json_config(CONFIG_PATH_CATEG)
     valid_vals = {"Urbana", "Distrital"}
     cfg_categ = {k: (v if v in valid_vals else None) for k, v in cfg_categ.items() if isinstance(k, str)}
@@ -529,7 +529,7 @@ if "Nome Linha" in df.columns:
     atuais_urbanas = [l for l in linhas_unicas if cfg_categ.get(l) == "Urbana"]
     atuais_distritais = [l for l in linhas_unicas if cfg_categ.get(l) == "Distrital"]
 
-    with st.sidebar.expander("Apropriar Linhas por Categoria", expanded=False):
+    with _st.sidebar.expander("Apropriar Linhas por Categoria", expanded=False):
         sel_urbanas = st.multiselect("Linhas Urbanas", options=linhas_unicas, default=atuais_urbanas, key="ms_urb")
         restantes = [l for l in linhas_unicas if l not in sel_urbanas]
         sel_distritais = st.multiselect("Linhas Distritais", options=restantes, default=[l for l in atuais_distritais if l in restantes], key="ms_dis")
@@ -547,7 +547,7 @@ if "Nome Linha" in df.columns:
         with col_s2:
             if st.button("↩️ Reset (limpar)", use_container_width=True):
                 if save_json_config(CONFIG_PATH_CATEG, {}):
-                    st.warning("Classificação removida.")
+                    _st.warning("Classificação removida.")
                     cfg_categ = {}
 
     df["Categoria Linha"] = df["Nome Linha"].map(cfg_categ)
@@ -557,16 +557,16 @@ if "Nome Linha" in df.columns:
 # ------------------------------
 km_store = load_km_store()
 if "Nome Linha" in df.columns:
-    with st.sidebar.expander("KM por Linha (vigências)", expanded=False):
+    with _st.sidebar.expander("KM por Linha (vigências)", expanded=False):
         linhas_unicas = sorted([x for x in df["Nome Linha"].dropna().astype(str).unique()])
         linha_sel = st.selectbox("Linha", options=["(selecione)"] + linhas_unicas, index=0, key="sel_linha_km")
         if linha_sel and linha_sel != "(selecione)":
             vlist = km_store.get(linha_sel, [])
             if vlist:
-                st.write("Vigências atuais:")
+                _st.write("Vigências atuais:")
                 st.dataframe(pd.DataFrame(vlist))
             else:
-                st.info("Sem vigências cadastradas para esta linha.")
+                _st.info("Sem vigências cadastradas para esta linha.")
 
             st.markdown("**Adicionar/alterar vigência**")
             colk1, colk2 = st.columns(2)
@@ -594,7 +594,7 @@ if "Nome Linha" in df.columns:
                 if st.button("🗑️ Limpar todas vigências da linha", use_container_width=True):
                     km_store[linha_sel] = []
                     if save_km_store(km_store):
-                        st.warning("Vigências removidas para a linha.")
+                        _st.warning("Vigências removidas para a linha.")
                     else:
                         st.error("Falha ao salvar após limpeza.")
 
@@ -606,16 +606,16 @@ df = apply_km_vigente(df, km_store)
 # ------------------------------
 veic_store = load_veic_store()
 if "Nome Linha" in df.columns:
-    with st.sidebar.expander("Veículos por Linha (vigências)", expanded=False):
+    with _st.sidebar.expander("Veículos por Linha (vigências)", expanded=False):
         linhas_unicas = sorted([x for x in df["Nome Linha"].dropna().astype(str).unique()])
         linha_sel_v = st.selectbox("Linha", options=["(selecione)"] + linhas_unicas, index=0, key="sel_linha_veic")
         if linha_sel_v and linha_sel_v != "(selecione)":
             vlist_v = veic_store.get(linha_sel_v, [])
             if vlist_v:
-                st.write("Vigências atuais (veículos):")
+                _st.write("Vigências atuais (veículos):")
                 st.dataframe(pd.DataFrame(vlist_v))
             else:
-                st.info("Sem vigências cadastradas para esta linha (veículos).")
+                _st.info("Sem vigências cadastradas para esta linha (veículos).")
 
             st.markdown("**Adicionar/alterar vigência (veículos)**")
             colv1, colv2 = st.columns(2)
@@ -643,7 +643,7 @@ if "Nome Linha" in df.columns:
                 if st.button("🗑️ Limpar vigências (veículos) da linha", use_container_width=True):
                     veic_store[linha_sel_v] = []
                     if save_veic_store(veic_store):
-                        st.warning("Vigências de veículos removidas para a linha.")
+                        _st.warning("Vigências de veículos removidas para a linha.")
                     else:
                         st.error("Falha ao salvar após limpeza (veículos).")
 
@@ -653,14 +653,14 @@ df = apply_veic_vigente(df, veic_store)
 # ------------------------------
 # Filtros
 # ------------------------------
-st.sidebar.header("Filtros")
+_st.sidebar.header("Filtros")
 df_filtered = df.copy()
 
 # Período
 if "Data Coleta" in df_filtered.columns and df_filtered["Data Coleta"].notna().any():
     min_d = pd.to_datetime(df_filtered["Data Coleta"].min()).date()
     max_d = pd.to_datetime(df_filtered["Data Coleta"].max()).date()
-    d_ini, d_fim = st.sidebar.date_input("Período", value=(min_d, max_d), min_value=min_d, max_value=max_d, format="DD/MM/YYYY")
+    d_ini, d_fim = _st.sidebar.date_input("Período", value=(min_d, max_d), min_value=min_d, max_value=max_d, format="DD/MM/YYYY")
     if isinstance(d_ini, date) and isinstance(d_fim, date):
         mask = (df_filtered["Data Coleta"].dt.date >= d_ini) & (df_filtered["Data Coleta"].dt.date <= d_fim)
         df_filtered = df_filtered.loc[mask]
@@ -668,34 +668,34 @@ if "Data Coleta" in df_filtered.columns and df_filtered["Data Coleta"].notna().a
 # Linha
 if "Nome Linha" in df_filtered.columns:
     linhas = sorted([x for x in df_filtered["Nome Linha"].dropna().unique().tolist()])
-    sel_linhas = st.sidebar.multiselect("Linhas", linhas)
+    sel_linhas = _st.sidebar.multiselect("Linhas", linhas)
     if sel_linhas:
         df_filtered = df_filtered[df_filtered["Nome Linha"].isin(sel_linhas)]
 
 # Categoria
 if "Categoria Linha" in df_filtered.columns:
-    cat_opt = st.sidebar.selectbox("Categoria", options=["Todas", "Urbanas", "Distritais"], index=0)
+    cat_opt = _st.sidebar.selectbox("Categoria", options=["Todas", "Urbanas", "Distritais"], index=0)
     if cat_opt != "Todas":
         df_filtered = df_filtered[df_filtered["Categoria Linha"] == ("Urbana" if cat_opt == "Urbanas" else "Distrital")]
 
 # Veículo
 if "Numero Veiculo" in df_filtered.columns:
     veics = sorted([str(x) for x in df_filtered["Numero Veiculo"].dropna().astype(str).unique().tolist()])
-    sel_veics = st.sidebar.multiselect("Veículos", veics)
+    sel_veics = _st.sidebar.multiselect("Veículos", veics)
     if sel_veics:
         df_filtered = df_filtered[df_filtered["Numero Veiculo"].astype(str).isin(sel_veics)]
 
 # Terminal
 # Expurgo / Visualização
-st.sidebar.header("Expurgo de viagens")
-expurgar_zero = st.sidebar.checkbox("Expurgar viagens com 0 passageiros", value=False)
-expurgar_trein = st.sidebar.checkbox("Expurgar motoristas em treinamento", value=False)
-modo_visu = st.sidebar.selectbox("Modo de visualização", options=["Normal", "Apenas expurgados"], index=0)
+_st.sidebar.header("Expurgo de viagens")
+expurgar_zero = _st.sidebar.checkbox("Expurgar viagens com 0 passageiros", value=False)
+expurgar_trein = _st.sidebar.checkbox("Expurgar motoristas em treinamento", value=False)
+modo_visu = _st.sidebar.selectbox("Modo de visualização", options=["Normal", "Apenas expurgados"], index=0)
 
 # Como identificar "treinamento"
 possiveis_col_status = [c for c in ["Descricao Tipo Evento","Tipo Viagem","Observacao","Grupo Veiculo","Categoria Linha","Cobrador/Operador","Matricula"] if c in df_filtered.columns]
-col_status = st.sidebar.selectbox("Coluna para identificar treinamento", options=["(automático)"] + possiveis_col_status, index=0)
-palavras_trein = st.sidebar.text_input("Palavras-chave (separadas por vírgula)", value="trein, treinamento")
+col_status = _st.sidebar.selectbox("Coluna para identificar treinamento", options=["(automático)"] + possiveis_col_status, index=0)
+palavras_trein = _st.sidebar.text_input("Palavras-chave (separadas por vírgula)", value="trein, treinamento")
 
 def make_training_mask(df_in):
     if col_status != "(automático)":
@@ -732,7 +732,7 @@ if modo_visu == "Apenas expurgados":
     if criterio.any():
         df_filtered = df_filtered[criterio]
     else:
-        st.sidebar.info("Ative pelos menos um critério para visualizar apenas expurgados.")
+        __st.sidebar.info("Ative pelos menos um critério para visualizar apenas expurgados.")
 else:
     # Modo normal: removemos os expurgados marcados
     if expurgar_zero:
@@ -742,19 +742,19 @@ else:
 
 if "Descricao Terminal" in df_filtered.columns:
     terms = sorted([x for x in df_filtered["Descricao Terminal"].dropna().unique().tolist()])
-    sel_terms = st.sidebar.multiselect("Terminais", terms)
+    sel_terms = _st.sidebar.multiselect("Terminais", terms)
     if sel_terms:
         df_filtered = df_filtered[df_filtered["Descricao Terminal"].isin(sel_terms)]
 
 # Parâmetros de alerta
-st.sidebar.header("Alertas")
-thr_dist_alta = st.sidebar.number_input("Distância alta (km) ≥", min_value=0.0, value=20.0, step=1.0, format="%.0f")
-thr_pax_baixa = st.sidebar.number_input("Passageiros baixos ≤", min_value=0, value=5, step=1, format="%d")
+_st.sidebar.header("Alertas")
+thr_dist_alta = _st.sidebar.number_input("Distância alta (km) ≥", min_value=0.0, value=20.0, step=1.0, format="%.0f")
+thr_pax_baixa = _st.sidebar.number_input("Passageiros baixos ≤", min_value=0, value=5, step=1, format="%d")
 
 # Parâmetros financeiros
-st.sidebar.header("Financeiro")
-tarifa_usuario = st.sidebar.number_input("Tarifa ao usuário (R$)", min_value=0.0, value=2.00, step=0.10, format="%.2f")
-subsidio_pagante = st.sidebar.number_input("Subsídio por pagante (R$)", min_value=0.0, value=4.20, step=0.10, format="%.2f")
+_st.sidebar.header("Financeiro")
+tarifa_usuario = _st.sidebar.number_input("Tarifa ao usuário (R$)", min_value=0.0, value=2.00, step=0.10, format="%.2f")
+subsidio_pagante = _st.sidebar.number_input("Subsídio por pagante (R$)", min_value=0.0, value=4.20, step=0.10, format="%.2f")
 
 # ------------------------------
 # KPIs
@@ -870,7 +870,7 @@ for cc in ["Cobrador/Operador", "Matricula"]:
         break
 
 if motorista_col is None:
-    st.info("Não encontrei colunas de motorista (ex.: 'Cobrador/Operador' ou 'Matricula').")
+    _st.info("Não encontrei colunas de motorista (ex.: 'Cobrador/Operador' ou 'Matricula').")
 else:
     # Agregações por motorista
     dist_col_drv = "Distancia_cfg_km" if ("Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in df_filtered.columns else None)
@@ -936,7 +936,7 @@ else:
         a2.metric("% motoristas ≥ 100%", fmt_pct(pct_full, 1))
         a3.metric("% motoristas ≤ 80%", fmt_pct(pct_baixo, 1))
     else:
-        st.info("Para calcular o aproveitamento, são necessários 'Data Hora Inicio Operacao' e 'Data Hora Final Operacao'.")
+        _st.info("Para calcular o aproveitamento, são necessários 'Data Hora Inicio Operacao' e 'Data Hora Final Operacao'.")
 
     # Rankings
     st.markdown("**Rankings por motorista (Top 20)**")
@@ -975,7 +975,7 @@ else:
             st.dataframe(top_aprov, use_container_width=True)
         else:
             st.caption("Maior aproveitamento")
-            st.info("Sem dados suficientes para o ranking de aproveitamento.")
+            _st.info("Sem dados suficientes para o ranking de aproveitamento.")
 
 
 # ------------------------------
@@ -1020,7 +1020,7 @@ with colB5:
         st.dataframe(bot_aprov, use_container_width=True)
     else:
         st.caption("Menor aproveitamento")
-        st.info("Sem dados suficientes para o ranking de aproveitamento.")
+        _st.info("Sem dados suficientes para o ranking de aproveitamento.")
 
 
 # ------------------------------
@@ -1044,20 +1044,20 @@ except Exception as _e:
 # ------------------------------
 # IA (Beta)
 # ------------------------------
-st.sidebar.header("🤖 IA (Beta)")
+_st.sidebar.header("🤖 IA (Beta)")
 
-ai_perf = st.sidebar.checkbox("Score de performance de motoristas (ajustado por contexto)", value=False, help="Compara o que o motorista entregou vs o esperado para o contexto da viagem.")
-ai_cluster = st.sidebar.checkbox("Clusterização de linhas (K-Means)", value=False, help="Agrupa linhas por perfil operacional.")
-k_clusters = st.sidebar.slider("Clusters (linhas)", min_value=2, max_value=8, value=4, step=1)
+ai_perf = _st.sidebar.checkbox("Score de performance de motoristas (ajustado por contexto)", value=False, help="Compara o que o motorista entregou vs o esperado para o contexto da viagem.")
+ai_cluster = _st.sidebar.checkbox("Clusterização de linhas (K-Means)", value=False, help="Agrupa linhas por perfil operacional.")
+k_clusters = _st.sidebar.slider("Clusters (linhas)", min_value=2, max_value=8, value=4, step=1)
 
-ai_anom = st.sidebar.checkbox("Detecção de anomalias (IsolationForest)", value=False, help="Identifica viagens atípicas com base em múltiplos sinais.")
-ai_fore = st.sidebar.checkbox("Previsão de demanda por linha (Prophet)", value=False, help="Prevê passageiros por dia/linha para planejamento.")
-contam = st.sidebar.slider("Anomalias: fração esperada (%)", min_value=1, max_value=10, value=3, step=1, help="Percentual aproximado de outliers no conjunto.", format="%d%%")
-forecast_horizon = st.sidebar.number_input("Previsão: horizonte (dias)", min_value=7, max_value=90, value=30, step=1)
+ai_anom = _st.sidebar.checkbox("Detecção de anomalias (IsolationForest)", value=False, help="Identifica viagens atípicas com base em múltiplos sinais.")
+ai_fore = _st.sidebar.checkbox("Previsão de demanda por linha (Prophet)", value=False, help="Prevê passageiros por dia/linha para planejamento.")
+contam = _st.sidebar.slider("Anomalias: fração esperada (%)", min_value=1, max_value=10, value=3, step=1, help="Percentual aproximado de outliers no conjunto.", format="%d%%")
+forecast_horizon = _st.sidebar.number_input("Previsão: horizonte (dias)", min_value=7, max_value=90, value=30, step=1)
 linha_opts = ["(auto)"]
 if "Nome Linha" in df_filtered.columns:
     linha_opts += sorted([x for x in df_filtered["Nome Linha"].dropna().astype(str).unique().tolist()])
-line_for_forecast = st.sidebar.selectbox("Linha para previsão", options=linha_opts, index=0)
+line_for_forecast = _st.sidebar.selectbox("Linha para previsão", options=linha_opts, index=0)
 
 # ---------- Detecção de anomalias ----------
 anomias_df = pd.DataFrame()
@@ -1106,7 +1106,7 @@ if ai_anom:
         })
         feats = feats.replace([np.inf, -np.inf], np.nan).dropna()
         if len(feats) < 20:
-            st.info("Dados insuficientes para treinar o modelo de anomalias (mín. 20 linhas com features completas).")
+            _st.info("Dados insuficientes para treinar o modelo de anomalias (mín. 20 linhas com features completas).")
         else:
             iso = IsolationForest(
                 n_estimators=200,
@@ -1168,7 +1168,7 @@ if ai_perf:
         # Requisitos mínimos
         need_cols = ["Passageiros"]
         if not all(c in base.columns for c in need_cols):
-            st.info("É necessário ter a coluna 'Passageiros' para calcular o score.")
+            _st.info("É necessário ter a coluna 'Passageiros' para calcular o score.")
         else:
             # Variáveis de contexto
             # Distância
@@ -1221,7 +1221,7 @@ if ai_perf:
             X = X.loc[:, X.std(numeric_only=True) > 0]
 
             if len(X) < 50 or X.isna().any().any():
-                st.info("Dados insuficientes/limpos para treinar o modelo de baseline.")
+                _st.info("Dados insuficientes/limpos para treinar o modelo de baseline.")
             else:
                 try:
                     model = LinearRegression()
@@ -1292,7 +1292,7 @@ if ai_fore:
         # Seleção de linhas a prever
         dff = df_filtered.copy()
         if "Data" not in dff.columns or "Passageiros" not in dff.columns or not dff["Data"].notna().any():
-            st.info("São necessários 'Data' e 'Passageiros' agregáveis para a previsão.")
+            _st.info("São necessários 'Data' e 'Passageiros' agregáveis para a previsão.")
         else:
             # Linhas candidatas
             linhas_disp = sorted([x for x in dff["Nome Linha"].dropna().astype(str).unique().tolist()]) if "Nome Linha" in dff.columns else []
@@ -1304,7 +1304,7 @@ if ai_fore:
                 linhas_alvo = top
 
             if not linhas_alvo:
-                st.info("Nenhuma linha encontrada para previsão.")
+                _st.info("Nenhuma linha encontrada para previsão.")
             else:
                 for ln in linhas_alvo:
                     st.markdown(f"**Linha: {ln}**")
@@ -1313,7 +1313,7 @@ if ai_fore:
                              .sort_values("Data"))
                     serie = serie.dropna(subset=["Data","Passageiros"])
                     if len(serie) < 14:
-                        st.info("Histórico insuficiente para previsão desta linha (mín. 14 dias).")
+                        _st.info("Histórico insuficiente para previsão desta linha (mín. 14 dias).")
                         continue
                     ds = pd.to_datetime(serie["Data"])
                     y = serie["Passageiros"].astype(float)
@@ -1354,7 +1354,7 @@ if {"Data", "Passageiros"}.issubset(df_filtered.columns) and df_filtered["Data"]
     fig.update_xaxes(tickformat="%d/%m/%Y")
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("Sem dados de 'Data Coleta' e 'Passageiros' suficientes para a série temporal.")
+    _st.info("Sem dados de 'Data Coleta' e 'Passageiros' suficientes para a série temporal.")
 
 left, right = st.columns(2)
 
@@ -1372,7 +1372,7 @@ with left:
         st.caption("Tabela (formatada)")
         st.dataframe(rank_fmt.head(50))
     else:
-        st.info("Colunas necessárias ausentes: 'Nome Linha' e/ou 'Passageiros'.")
+        _st.info("Colunas necessárias ausentes: 'Nome Linha' e/ou 'Passageiros'.")
 
 with right:
     st.subheader("🧾 Distribuição por tipo de tarifa")
@@ -1387,9 +1387,9 @@ with right:
             fig.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=380)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("As colunas de tarifa existem, mas não há valores positivos no filtro atual.")
+            _st.info("As colunas de tarifa existem, mas não há valores positivos no filtro atual.")
     else:
-        st.info("Não foram encontradas colunas de tarifação (Quant * / Quant Inteiras) com dados.")
+        _st.info("Não foram encontradas colunas de tarifação (Quant * / Quant Inteiras) com dados.")
 
 st.subheader("📍 Relação distância x passageiros")
 x_col = "Distancia_cfg_km" if ("Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in df_filtered.columns else None)
@@ -1412,7 +1412,7 @@ if x_col and {x_col, "Passageiros"}.issubset(df_filtered.columns) and df_filtere
     fig.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=380)
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("Sem dados suficientes para plotar distância x passageiros.")
+    _st.info("Sem dados suficientes para plotar distância x passageiros.")
 
 st.subheader("⏰ Picos por hora e dia da semana")
 if {"Passageiros"}.issubset(df_filtered.columns):
@@ -1437,9 +1437,9 @@ if {"Hora_Base","DiaSemana_Base","Passageiros"}.issubset(df_filtered.columns) an
         fig.update_layout(margin=dict(l=10, r=10, t=35, b=10), height=380)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("Não há dados suficientes para o heatmap no filtro atual.")
+        _st.info("Não há dados suficientes para o heatmap no filtro atual.")
 else:
-    st.info("Sem colunas de horário adequadas para gerar o heatmap.")
+    _st.info("Sem colunas de horário adequadas para gerar o heatmap.")
 
 # ------------------------------
 # Alertas
@@ -1470,7 +1470,7 @@ if base_x and {base_x, "Passageiros"}.issubset(df_filtered.columns):
 if alertas:
     for titulo, df_a in alertas:
         st.markdown(f"**• {titulo}: {len(df_a)} registros**")
-        with st.expander("Ver amostra"):
+        with _st.expander("Ver amostra"):
             st.dataframe(df_a.head(100))
 else:
     st.success("Nenhum alerta gerado com os filtros atuais.")
@@ -1690,7 +1690,7 @@ if "Nome Linha" in df_filtered.columns:
                     pass
         st.dataframe(tabela, use_container_width=True)
 else:
-    st.info("Não há coluna 'Nome Linha' nos dados para consolidar.")
+    _st.info("Não há coluna 'Nome Linha' nos dados para consolidar.")
 
 # ------------------------------
 # Exportações
@@ -1777,7 +1777,7 @@ if ai_cluster:
     else:
         base = df_filtered.copy()
         if "Nome Linha" not in base.columns:
-            st.info("É necessário ter 'Nome Linha' para clusterização.")
+            _st.info("É necessário ter 'Nome Linha' para clusterização.")
         else:
             # Distância a usar
             dcol = "Distancia_cfg_km" if ("Distancia_cfg_km" in base.columns and base["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in base.columns else None)
@@ -2012,7 +2012,7 @@ def _render_trends_financeiro(df):
     if _st is None: return
     series = _tz_daily_series(df)
     _st.markdown("## 💹 Tendências — Indicadores Financeiros")
-    win = _st.sidebar.selectbox("Janela de tendência (financeiro)", [7,14,28], index=0, key="win_fin")
+    win = __st.sidebar.selectbox("Janela de tendência (financeiro)", [7,14,28], index=0, key="win_fin")
     rec = series["rec_day"]
     trips = series["trips_day"]
     rec_per_trip = (rec / trips.replace(0, _np.nan))
@@ -2033,7 +2033,7 @@ def _render_trends_avancados(df):
     if _st is None: return
     series = _tz_daily_series(df)
     _st.markdown("## 🧠 Tendências — Indicadores Avançados")
-    win = _st.sidebar.selectbox("Janela de tendência (avançados)", [7,14,28], index=0, key="win_adv")
+    win = __st.sidebar.selectbox("Janela de tendência (avançados)", [7,14,28], index=0, key="win_adv")
     metrics = [
         ("IPK pagantes (pax/km)", series["ipk_pag_day"], False),
         ("Pax por viagem", series["pax_trip_day"], False),
@@ -2052,10 +2052,10 @@ def _render_trends_avancados(df):
 def _render_trends_por_motorista(df):
     if _st is None: return
     _st.markdown("## 👤 Tendências — Indicadores por Motorista")
-    win = _st.sidebar.selectbox("Janela de tendência (motorista)", [7,14,28], index=0, key="win_mot")
+    win = __st.sidebar.selectbox("Janela de tendência (motorista)", [7,14,28], index=0, key="win_mot")
     name_col = _tz_first(df, ["Cobrador/Operador","Nome Motorista","Motorista","Nome do Motorista","Nome Condutor","Condutor"])
     if not name_col or name_col not in df.columns:
-        _st.info("Coluna de nome do motorista não encontrada (ex.: 'Cobrador/Operador').")
+        __st.info("Coluna de nome do motorista não encontrada (ex.: 'Cobrador/Operador').")
         return
 
     def _pag(df_):
@@ -2087,7 +2087,7 @@ def _render_trends_por_motorista(df):
         dlt = _tz_delta(s, win, "previous")
         deltas.append((mot, dlt, s))
     if not deltas:
-        _st.info("Sem dados suficientes por motorista.")
+        __st.info("Sem dados suficientes por motorista.")
         return
     deltas.sort(key=lambda x: (x[1] if x[1] is not None else -999), reverse=True)
     top = deltas[:15]
@@ -2116,8 +2116,8 @@ def _render_trends_por_motorista(df):
 
 try:
     # === Importação de CSV (reintroduzida) ==================================
-    st.sidebar.markdown("### 📤 Importar CSV")
-    _up = st.sidebar.file_uploader("Adicionar dados (CSV)", type=["csv"], key="csv_import")
+    _st.sidebar.markdown("### 📤 Importar CSV")
+    _up = _st.sidebar.file_uploader("Adicionar dados (CSV)", type=["csv"], key="csv_import")
     def _read_csv_any(fobj):
         import pandas as _pd_local
         for enc in ["utf-8", "latin-1", "cp1252"]:
@@ -2143,27 +2143,27 @@ try:
             df = pd.concat([df, df_new], ignore_index=True)
             if keys:
                 df.drop_duplicates(subset=keys, inplace=True)
-                st.sidebar.success(f"Importação concluída. Chaves usadas para dedupe: {', '.join(keys)}")
+                __st.sidebar.success(f"Importação concluída. Chaves usadas para dedupe: {', '.join(keys)}")
             else:
                 df.drop_duplicates(inplace=True)
-                st.sidebar.info("Importação concluída. Não foram encontradas chaves; dedupe por linha completa.")
+                __st.sidebar.info("Importação concluída. Não foram encontradas chaves; dedupe por linha completa.")
             # Atualiza df_filtered para refletir os novos dados (filtros serão aplicados adiante no app)
             try:
                 df_filtered = df.copy()
             except Exception:
                 pass
         else:
-            st.sidebar.warning("Estrutura de dados principal (df) não encontrada para mesclar o CSV.")
+            __st.sidebar.warning("Estrutura de dados principal (df) não encontrada para mesclar o CSV.")
     # =========================================================================
 
     # Pequeno diagnóstico (opcional) mostrando colunas-chave detectadas
-    with st.expander("🔧 Diagnóstico de tendências (colunas detectadas)"):
+    with _st.expander("🔧 Diagnóstico de tendências (colunas detectadas)"):
         sample_df = df_filtered if 'df_filtered' in globals() else df
         if isinstance(sample_df, pd.DataFrame):
             cols = list(sample_df.columns)
-            st.write("Colunas disponíveis (amostra):", cols[:40])
+            _st.write("Colunas disponíveis (amostra):", cols[:40])
         else:
-            st.write("Dataframe principal indisponível para diagnóstico.")
+            _st.write("Dataframe principal indisponível para diagnóstico.")
 
     _base_df = df_filtered.copy() if 'df_filtered' in globals() else df.copy()
     _render_trends_financeiro(_base_df)
@@ -2171,12 +2171,12 @@ try:
     _render_trends_por_motorista(_base_df)
 except Exception as _e:
     try:
-        st.warning(f"Tendências: falha na renderização: {_e}")
+        _st.warning(f"Tendências: falha na renderização: {_e}")
     except Exception:
         pass
 
     try:
-        _st.warning(f"Tendências: falha na renderização: {_e}")
+        __st.warning(f"Tendências: falha na renderização: {_e}")
     except Exception:
         pass
 # === END TRENDS PANELS =========================================================
