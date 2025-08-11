@@ -15,6 +15,13 @@ import plotly.express as px
 import streamlit as st
 from datetime import date
 from io import BytesIO
+# === Helper: rerun seguro (compat Streamlit) ===
+def _rerun_safe():
+    try:
+        import streamlit as st
+        _rerun_safe()
+    except Exception:
+        pass
 # === Helper: encontra/forma o DataFrame base ===
 def _ensure_base_df():
     try:
@@ -579,13 +586,7 @@ if uploaded_csv_cfg is not None:
             st.session_state['df'] = merged.copy()
         except Exception:
             pass
-        try:
-    st.rerun()
-except Exception:
-    try:
-        st.experimental_rerun()
-    except Exception:
-        pass
+        _rerun_safe()
     except Exception as _e:
         st.sidebar.error(f"Falha ao importar CSV: {_e}")
 # =========================================================================="
