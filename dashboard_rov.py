@@ -13,60 +13,6 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-
-
-def inject_compact_css(base_font_px=13, table_px=12, metric_value_rem=1.0, metric_label_rem=0.8, header_scale=0.9):
-    # Usamos .format e chaves escapadas {{ }} para CSS
-    style = """
-    <style>
-    /* Fonte base do app e da sidebar */
-    html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] * {{
-        font-size: {base_font_px}px !important;
-    }}
-    /* Cabeçalhos menores */
-    h1 {{ font-size: {h1}px !important; }}
-    h2 {{ font-size: {h2}px !important; }}
-    h3 {{ font-size: {h3}px !important; }}
-
-    /* Métricas (st.metric) */
-    div[data-testid="stMetricValue"] {{ font-size: {metric_value_rem}rem !important; line-height: 1.0 !important; }}
-    div[data-testid="stMetricLabel"] {{ font-size: {metric_label_rem}rem !important; }}
-
-    /* Tabelas (st.dataframe e st.table) */
-    div[data-testid="stDataFrame"] div[role="grid"] *, div[role="gridcell"], div[role="rowgroup"] *, div[role="gridcell"], div[role="rowgroup"] * {{
-        font-size: {table_px}px !important;
-        line-height: 1.1 !important;
-    }}
-    div[data-testid="stTable"] table {{
-        font-size: {table_px}px !important;
-        line-height: 1.15 !important;
-    }}
-
-    /* Parágrafos/listas mais compactos */
-    .stMarkdown p, .stMarkdown li {{
-        line-height: 1.2 !important;
-        margin-bottom: 0.2rem !important;
-    }}
-
-    /* Reduzir padding das colunas pra caber mais conteúdo */
-    [data-testid="stHorizontalBlock"] > div {{
-        padding-left: 0.4rem !important;
-        padding-right: 0.4rem !important;
-    }}
-
-    /* Compactar altura dos cards de métricas */
-    div[data-testid="metric-container"] {{ margin-bottom: 0.25rem !important; }}
-    </style>
-    """.format(
-        base_font_px=base_font_px,
-        table_px=table_px,
-        metric_value_rem=metric_value_rem,
-        metric_label_rem=metric_label_rem,
-        h1=int(28*header_scale),
-        h2=int(22*header_scale),
-        h3=int(18*header_scale),
-    )
-    st.markdown(style, unsafe_allow_html=True)
 from datetime import date
 from io import BytesIO
 
@@ -98,19 +44,6 @@ except Exception:
 # ------------------------------
 st.set_page_config(page_title="Dashboard ROV - Operação", layout="wide")
 
-
-# ---- Controles de aparência (sidebar) ----
-try:
-    with st.sidebar.expander("🎛️ Aparência", expanded=True):
-        base_font_px = st.slider("Tamanho base do app (px)", min_value=10, max_value=18, value=13, step=1)
-        table_px = st.slider("Tamanho da fonte nas tabelas (px)", min_value=9, max_value=16, value=12, step=1)
-        metric_value_rem = st.slider("Métrica: tamanho do valor (rem)", min_value=0.7, max_value=1.6, value=1.0, step=0.1)
-        metric_label_rem = st.slider("Métrica: tamanho do rótulo (rem)", min_value=0.6, max_value=1.2, value=0.8, step=0.1)
-        header_scale = st.slider("Cabeçalhos (escala)", min_value=0.6, max_value=1.2, value=0.9, step=0.05)
-    inject_compact_css(base_font_px, table_px, metric_value_rem, metric_label_rem, header_scale)
-except Exception:
-    # fallback silencioso
-    inject_compact_css()
 # ------------------------------
 # Persistência (arquivos JSON na mesma pasta do app)
 # ------------------------------
@@ -155,138 +88,6 @@ def fmt_currency(x, nd=2):
 
 def fmt_pct(x, nd=1):
     try:
-        val = float(x) * 100.0
-        return f"{val:,.{nd}f}%".replace(",", "X").replace(".", ",").replace("X", ".")
-    except Exception:
-        return "0,0%"
-
-
-# ------------------------------
-# Tendências / Período anterior (helpers reutilizáveis)
-# ------------------------------
-import pandas as _pd
-
-def _prev_window(d_ini, d_fim):
-    """Retorna (início, fim) do período anterior de mesmo tamanho (inclusive)."""
-    try:
-        days = (d_fim - d_ini).days + 1
-        prev_ini = d_ini - _pd.Timedelta(days=days)
-        prev_fim = d_ini - _pd.Timedelta(days=1)
-        return prev_ini, prev_fim
-    except Exception:
-        return None, None
-
-def _metric_delta(curr, prev):
-    """Retorna string ±x.x% para st.metric; None se não houver base."""
-    try:
-        if prev in (None, 0) or _pd.isna(prev):
-            return None
-        pct = (curr - prev) / prev * 100.0
-        return f"{pct:+.1f}%"
-    except Exception:
-        return None
-
-def _get_sum(dfX, cols):
-    """Soma robusta de múltiplas colunas se existirem."""
-    try:
-        present = [c for c in cols if c in dfX.columns]
-        return float(dfX[present].sum(numeric_only=True).sum()) if present else 0.0
-    except Exception:
-        return 0.0
-
-def compute_metric(dfX, kind):
-    """Calcula diversos indicadores com base nas colunas existentes no df informado."""
-    if dfX is None or len(dfX) == 0:
-        return 0.0
-
-    # Básicos
-    if kind == "passageiros":
-        return float(dfX["Passageiros"].sum()) if "Passageiros" in dfX.columns else 0.0
-    if kind == "viagens":
-        return float(len(dfX))
-    if kind == "distancia":
-        if "Distancia_cfg_km" in dfX.columns:
-            return float(dfX["Distancia_cfg_km"].sum(numeric_only=True))
-        return float(dfX["Distancia"].sum()) if "Distancia" in dfX.columns else 0.0
-    if kind == "media_pax_viagem":
-        v = compute_metric(dfX, "viagens")
-        p = compute_metric(dfX, "passageiros")
-        return p / v if v > 0 else 0.0
-    if kind == "veiculos":
-        return float(dfX["Numero Veiculo"].nunique()) if "Numero Veiculo" in dfX.columns else 0.0
-    if kind == "linhas":
-        return float(dfX["Nome Linha"].nunique()) if "Nome Linha" in dfX.columns else 0.0
-
-    # Financeiros
-    paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
-    integration_cols_all = [
-        "Quant Passagem Integracao","Quant Passe Integracao","Quant Vale Transporte Integracao",
-        "Quant Passagem Integração","Quant Passe Integração","Quant Vale Transporte Integração"
-    ]
-    if kind == "pagantes_total":
-        return _get_sum(dfX, paying_cols_all)
-    if kind == "integracoes_total":
-        return _get_sum(dfX, integration_cols_all)
-    if kind == "gratuidade_total":
-        return float(dfX["Quant Gratuidade"].sum()) if "Quant Gratuidade" in dfX.columns else 0.0
-    if kind == "receita_tarifaria":
-        try:
-            return compute_metric(dfX, "pagantes_total") * float(tarifa_usuario)
-        except Exception:
-            return 0.0
-    if kind == "subsidio_total":
-        try:
-            return compute_metric(dfX, "pagantes_total") * float(subsidio_pagante)
-        except Exception:
-            return 0.0
-    if kind == "receita_total":
-        return compute_metric(dfX, "receita_tarifaria") + compute_metric(dfX, "subsidio_total")
-    if kind == "custo_publico_pax":
-        pax = compute_metric(dfX, "passageiros")
-        subs = compute_metric(dfX, "subsidio_total")
-        return subs / pax if pax > 0 else 0.0
-
-    # Avançados
-    if kind == "ipk_total":
-        dist = compute_metric(dfX, "distancia"); pax = compute_metric(dfX, "passageiros")
-        return pax / dist if dist > 0 else 0.0
-    if kind == "ipk_pagantes":
-        dist = compute_metric(dfX, "distancia"); pag = compute_metric(dfX, "pagantes_total")
-        return pag / dist if dist > 0 else 0.0
-    if kind == "receita_por_km":
-        dist = compute_metric(dfX, "distancia"); rec = compute_metric(dfX, "receita_total")
-        return rec / dist if dist > 0 else 0.0
-    if kind == "veic_cfg_total_medio":
-        try:
-            if {"Veiculos_cfg","Nome Linha"}.issubset(dfX.columns):
-                return float(dfX.groupby("Nome Linha", observed=False)["Veiculos_cfg"].mean(numeric_only=True).sum())
-        except Exception:
-            pass
-        return 0.0
-    if kind == "receita_por_veic_cfg":
-        veic_cfg = compute_metric(dfX, "veic_cfg_total_medio"); rec = compute_metric(dfX, "receita_total")
-        return rec / veic_cfg if veic_cfg > 0 else 0.0
-    if kind == "viagens_por_veic":
-        veic_cfg = compute_metric(dfX, "veic_cfg_total_medio")
-        return compute_metric(dfX, "viagens") / veic_cfg if veic_cfg > 0 else 0.0
-    if kind == "km_por_veic":
-        veic_cfg = compute_metric(dfX, "veic_cfg_total_medio")
-        return compute_metric(dfX, "distancia") / veic_cfg if veic_cfg > 0 else 0.0
-    if kind == "pax_por_veic":
-        veic_cfg = compute_metric(dfX, "veic_cfg_total_medio")
-        return compute_metric(dfX, "passageiros") / veic_cfg if veic_cfg > 0 else 0.0
-
-    return 0.0
-
-def metric_trend(col, label, kind, fmt_fn, df_cur, df_prev, invert=False):
-    """Renderiza st.metric com delta vs. período anterior."""
-    cur = compute_metric(df_cur, kind)
-    prev = compute_metric(df_prev, kind)
-    delta = _metric_delta(cur, prev)
-    try:
-        col.metric(label, fmt_fn(cur), delta=delta, delta_color=("inverse" if invert else "normal"))
-    except Exception:
-        col.metric(label, fmt_fn(cur))
         return (f"{float(x)*100:,.{nd}f}%").replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception:
         return "0,0%"
@@ -897,27 +698,6 @@ if "Numero Veiculo" in df_filtered.columns:
     if sel_veics:
         df_filtered = df_filtered[df_filtered["Numero Veiculo"].astype(str).isin(sel_veics)]
 
-
-# --- Janela de comparação (período anterior de mesmo tamanho) ---
-try:
-    _sel_linhas = locals().get("sel_linhas", None)
-    _cat_opt = locals().get("cat_opt", None)
-    _sel_veics = locals().get("sel_veics", None)
-    if ("Data Coleta" in df.columns) and isinstance(d_ini, date) and isinstance(d_fim, date):
-        prev_ini, prev_fim = _prev_window(d_ini, d_fim)
-        df_prev = df.copy()
-        if _sel_linhas and "Nome Linha" in df_prev.columns:
-            df_prev = df_prev[df_prev["Nome Linha"].isin(_sel_linhas)]
-        if _cat_opt and _cat_opt != "Todas" and "Categoria Linha" in df_prev.columns:
-            df_prev = df_prev[df_prev["Categoria Linha"] == ("Urbana" if _cat_opt == "Urbanas" else "Distrital")]
-        if _sel_veics and "Numero Veiculo" in df_prev.columns:
-            df_prev = df_prev[df_prev["Numero Veiculo"].astype(str).isin([str(v) for v in _sel_veics])]
-        mask_prev = (df_prev["Data Coleta"].dt.date >= prev_ini) & (df_prev["Data Coleta"].dt.date <= prev_fim)
-        df_prev = df_prev.loc[mask_prev].copy()
-    else:
-        df_prev = df.iloc[0:0].copy() if "df" in locals() else df_filtered.iloc[0:0].copy()
-except Exception as _e:
-    df_prev = df.iloc[0:0].copy() if "df" in locals() else df_filtered.iloc[0:0].copy()
 # Terminal
 # Expurgo / Visualização
 st.sidebar.header("Expurgo de viagens")
@@ -996,30 +776,30 @@ kpi_cols = st.columns(6)
 
 # Passageiros total
 total_pax = df_filtered["Passageiros"].sum() if "Passageiros" in df_filtered.columns else 0
-metric_trend(kpi_cols[0], "👥 Passageiros", "passageiros", fmt_int, df_filtered, df_prev)
+kpi_cols[0].metric("👥 Passageiros", fmt_int(total_pax))
 
 # Viagens registradas
 viagens = len(df_filtered)
-metric_trend(kpi_cols[1], "🧭 Viagens registradas", "viagens", fmt_int, df_filtered, df_prev)
+kpi_cols[1].metric("🧭 Viagens registradas", fmt_int(viagens))
 
 # Distância total (usa distância configurada quando existir)
 if "Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any():
     dist_total = df_filtered["Distancia_cfg_km"].sum(min_count=1)
 else:
     dist_total = df_filtered["Distancia"].sum() if "Distancia" in df_filtered.columns else 0.0
-metric_trend(kpi_cols[2], "🛣️ Distância total (km)", "distancia", lambda v: fmt_float(v, 1), df_filtered, df_prev)
+kpi_cols[2].metric("🛣️ Distância total (km)", fmt_float(dist_total, 1))
 
 # Média pax/viagem
 media_pax = (total_pax / viagens) if viagens > 0 else 0.0
-metric_trend(kpi_cols[3], "📈 Média pax/viagem", "media_pax_viagem", lambda v: fmt_float(v, 2), df_filtered, df_prev)
+kpi_cols[3].metric("📈 Média pax/viagem", fmt_float(media_pax, 2))
 
 # Veículos (IDs distintos na base filtrada)
 veics_ids = df_filtered["Numero Veiculo"].nunique() if "Numero Veiculo" in df_filtered.columns else 0
-metric_trend(kpi_cols[4], "🚌 Veículos (IDs distintos)", "veiculos", fmt_int, df_filtered, df_prev)
+kpi_cols[4].metric("🚌 Veículos (IDs distintos)", fmt_int(veics_ids))
 
 # Linhas ativas
 linhas_ativas = df_filtered["Nome Linha"].nunique() if "Nome Linha" in df_filtered.columns else 0
-metric_trend(kpi_cols[5], "🧵 Linhas ativas", "linhas", fmt_int, df_filtered, df_prev)
+kpi_cols[5].metric("🧵 Linhas ativas", fmt_int(linhas_ativas))
 
 # --- Financeiro (com base nas colunas existentes) ---
 paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
@@ -1040,13 +820,13 @@ custo_publico_por_pax_total = (subsidio_total / pax_total_calc) if pax_total_cal
 
 st.subheader("💰 Indicadores financeiros (parâmetros na barra lateral)")
 fin_cols = st.columns(7)
-metric_trend(fin_cols[0], "Pagantes", "pagantes_total", fmt_int, df_filtered, df_prev)
-metric_trend(fin_cols[1], "Integrações (sem custo)", "integracoes_total", fmt_int, df_filtered, df_prev)
-metric_trend(fin_cols[2], "Gratuidades", "gratuidade_total", fmt_int, df_filtered, df_prev)
-metric_trend(fin_cols[3], "Receita tarifária", "receita_tarifaria", lambda v: fmt_currency(v, 2), df_filtered, df_prev)
-metric_trend(fin_cols[4], "Subsídio total", "subsidio_total", lambda v: fmt_currency(v, 2), df_filtered, df_prev)
-metric_trend(fin_cols[5], "Custo público/pax", "custo_publico_pax", lambda v: fmt_currency(v, 2), df_filtered, df_prev, invert=True)
-metric_trend(fin_cols[6], "Receita total", "receita_total", lambda v: fmt_currency(v, 2), df_filtered, df_prev)
+fin_cols[0].metric("Pagantes", fmt_int(total_pagantes))
+fin_cols[1].metric("Integrações (sem custo)", fmt_int(total_integracoes))
+fin_cols[2].metric("Gratuidades", fmt_int(total_gratuidade))
+fin_cols[3].metric("Receita tarifária", fmt_currency(receita_tarifaria, 2))
+fin_cols[4].metric("Subsídio total", fmt_currency(subsidio_total, 2))
+fin_cols[5].metric("Custo público/pax", fmt_currency(custo_publico_por_pax_total, 2))
+fin_cols[6].metric("Receita total", fmt_currency(receita_total, 2))
 
 # ---------- NOVOS INDICADORES ----------
 # IPK (passageiros por km)
@@ -1074,17 +854,17 @@ pax_por_veic     = (total_pax / veic_cfg_total_medio)  if veic_cfg_total_medio a
 # Bloco de KPIs adicionais
 st.subheader("🚀 Indicadores avançados")
 colA, colB, colC, colD, colE = st.columns(5)
-metric_trend(colA, "IPK total (pax/km)", "ipk_total", lambda v: fmt_float(v, 3), df_filtered, df_prev)
-metric_trend(colB, "IPK pagantes (pax/km)", "ipk_pagantes", lambda v: fmt_float(v, 3), df_filtered, df_prev)
-metric_trend(colC, "Receita por km", "receita_por_km", lambda v: fmt_currency(v, 2), df_filtered, df_prev)
-metric_trend(colD, "Veículos configurados (média)", "veic_cfg_total_medio", lambda v: fmt_float(v, 2), df_filtered, df_prev)
-metric_trend(colE, "Receita por veículo", "receita_por_veic_cfg", lambda v: fmt_currency(v, 2), df_filtered, df_prev)
+colA.metric("IPK total (pax/km)", fmt_float(ipk_total, 3))
+colB.metric("IPK pagantes (pax/km)", fmt_float(ipk_pagantes, 3))
+colC.metric("Receita por km", fmt_currency(receita_por_km, 2))
+colD.metric("Veículos configurados (média)", fmt_float(veic_cfg_total_medio, 2))
+colE.metric("Receita por veículo", fmt_currency(receita_por_veic_cfg, 2))
 
 # KPIs médios por veículo
 colF, colG, colH = st.columns(3)
-metric_trend(colF, "Viagens por veículo", "viagens_por_veic", lambda v: fmt_float(v, 2), df_filtered, df_prev)
-metric_trend(colG, "KM por veículo", "km_por_veic", lambda v: fmt_float(v, 2), df_filtered, df_prev)
-metric_trend(colH, "Passageiros por veículo", "pax_por_veic", lambda v: fmt_float(v, 2), df_filtered, df_prev)
+colF.metric("Viagens por veículo", fmt_float(viagens_por_veic, 2))
+colG.metric("KM por veículo", fmt_float(km_por_veic, 2))
+colH.metric("Passageiros por veículo", fmt_float(pax_por_veic, 2))
 
 # ------------------------------
 # Gráficos
@@ -1095,27 +875,6 @@ metric_trend(colH, "Passageiros por veículo", "pax_por_veic", lambda v: fmt_flo
 # Indicadores por motorista
 # ------------------------------
 st.subheader("🧑‍✈️ Indicadores por motorista")
-# --- Tendências por motorista (Δ vs. período anterior) ---
-try:
-    motorista_col = None
-    for _cc in ["Cobrador/Operador", "Matricula"]:
-        if _cc in df_filtered.columns:
-            motorista_col = _cc
-            break
-    if motorista_col:
-        motoristas_disp = sorted([x for x in df_filtered[motorista_col].dropna().unique().tolist()])
-        if motoristas_disp:
-            sel_m = st.selectbox("👤 Motorista (tendência)", motoristas_disp, key="motorista_trend")
-            cur_m = df_filtered[df_filtered[motorista_col] == sel_m]
-            prev_m = df_prev[df_prev[motorista_col] == sel_m] if ("motorista_col" in locals() and motorista_col in df_prev.columns) else df_prev.iloc[0:0]
-            c1, c2, c3, c4 = st.columns(4)
-            metric_trend(c1, "Viagens", "viagens", fmt_int, cur_m, prev_m)
-            metric_trend(c2, "Passageiros", "passageiros", fmt_int, cur_m, prev_m)
-            metric_trend(c3, "Receita", "receita_total", lambda v: fmt_currency(v, 2), cur_m, prev_m)
-            metric_trend(c4, "IPK (pax/km)", "ipk_total", lambda v: fmt_float(v, 3), cur_m, prev_m)
-except Exception as _e:
-    pass
-
 
 motorista_col = None
 for cc in ["Cobrador/Operador", "Matricula"]:
