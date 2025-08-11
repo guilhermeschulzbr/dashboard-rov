@@ -1865,6 +1865,7 @@ if ai_cluster:
 
 
 
+
 # === TRENDS PANELS: FINANCEIRO / AVANCADO / POR MOTORISTA ===
 import pandas as _pd
 import numpy as _np
@@ -1882,6 +1883,7 @@ def _tz_first(df, names):
     return None
 
 def _tz_to_dt(s):
+    return _pd.to_datetime(s, errors="coerce", dayfirst=True)
 
 def _tz_as_series(x):
     try:
@@ -1891,19 +1893,16 @@ def _tz_as_series(x):
             num_cols = x.select_dtypes(include="number").columns
             if len(num_cols) > 0:
                 return x[num_cols[0]]
-            return x.iloc[:,0]
-        # numpy array or list-like
+            return x.iloc[:, 0]
         try:
             import numpy as _np_local
             if isinstance(x, (_np_local.ndarray, list, tuple)):
                 return _pd.Series(x)
         except Exception:
             pass
-        # scalar fallback
         return _pd.Series([x])
     except Exception:
         return _pd.Series(dtype=float)
-    return _pd.to_datetime(s, errors="coerce", dayfirst=True)
 
 def _tz_daily_series(df):
     d = df.copy()
@@ -1912,7 +1911,6 @@ def _tz_daily_series(df):
     d = d.dropna(subset=[date_col])
     d["__d"] = d[date_col].dt.date
 
-    # Pagantes (sem integração) e Gratuitos (sem integração)
     def _pag(df_):
         paying = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
         regex = [c for c in df_.columns if _pd.api.types.is_numeric_dtype(df_[c]) and _re.search(r"(?i)quant.*(inteir|passag|passe|vale|vt)", c) and not _re.search(r"(?i)grat|integr", c)]
@@ -1935,22 +1933,21 @@ def _tz_daily_series(df):
             return _pd.to_numeric(df_["Receita Total"], errors="coerce").fillna(0)
         if "Receita" in df_.columns:
             return _pd.to_numeric(df_["Receita"], errors="coerce").fillna(0)
-        # fallback simples: tarifa média * pagantes (se existir)
         tarifa_cols = [c for c in df_.columns if _re.search(r"(?i)tarifa|valor\s*pass", c)]
         tarifas = _pd.concat([_pd.to_numeric(df_[c], errors="coerce") for c in tarifa_cols], axis=1).mean(axis=1).fillna(0) if tarifa_cols else 0
         return _pag(df_) * tarifas
 
+    # Usa colunas de VEÍCULO, não de motorista
     veic_col = _tz_first(d, ["Numero Veiculo","Nº Veiculo","Veiculo","Veículo"])
 
     pag_day = _pag(d).groupby(d["__d"]).sum(min_count=1).sort_index()
     grat_day = _grat(d).groupby(d["__d"]).sum(min_count=1).sort_index()
-    pax_day = (pag_day + grat_day)
-    trips_day = d.groupby(d["__d"]).size()
+    pax_day = (pag_day + grat_day).sort_index()
+    trips_day = d.groupby(d["__d"]).size().sort_index()
     dist_day = _dist(d).groupby(d["__d"]).sum(min_count=1).sort_index()
     rec_day = _rec(d).groupby(d["__d"]).sum(min_count=1).sort_index()
-    oper_day = d.groupby(d["__d"])[veic_col].nunique() if veic_col else _pd.Series(0, index=pax_day.index)
+    oper_day = d.groupby(d["__d"])[veic_col].nunique().sort_index() if veic_col else _pd.Series(0, index=pax_day.index)
 
-    # cfg estimada (pico por linha) se disponível
     linha_col = _tz_first(d, ["Nome Linha","Linha"])
     if linha_col and veic_col:
         per_line_daily = d.groupby([linha_col, "__d"])[veic_col].nunique()
@@ -1969,7 +1966,6 @@ def _tz_daily_series(df):
         "dist_day": dist_day, "rec_day": rec_day, "oper_day": oper_day, "cfg_day": cfg_day,
         "ipk_pag_day": ipk_pag_day, "pax_trip_day": pax_trip_day, "ratio_op_cfg_day": ratio_op_cfg_day
     }
-
 
 def _tz_delta(series, window=7, mode="previous"):
     s = _tz_as_series(series)
@@ -1996,12 +1992,10 @@ def _tz_arrow(delta):
     return "→", "#9ca3af"
 
 def _tz_arrow_alert(delta):
-    # Para métricas onde alta é ruim (ex.: % gratuidades), invertido
     if _np.isnan(delta): return "→", "#9ca3af"
     if delta > 0.02: return "▲", "#ef4444"
     if delta < -0.02: return "▼", "#16a34a"
     return "→", "#9ca3af"
-
 
 def _tz_spark(series):
     fig = _go.Figure()
@@ -2022,9 +2016,9 @@ def _render_trends_financeiro(df):
     rec = series["rec_day"]
     trips = series["trips_day"]
     rec_per_trip = (rec / trips.replace(0, _np.nan))
-    for title, s, fmt, alert in [
-        ("Receita total diária", rec, "currency", False),
-        ("Receita por viagem", rec_per_trip, "currency", False),
+    for title, s in [
+        ("Receita total diária", rec),
+        ("Receita por viagem", rec_per_trip),
     ]:
         delta = _tz_delta(s, win, "previous")
         arrow, color = _tz_arrow(delta)
@@ -2033,7 +2027,7 @@ def _render_trends_financeiro(df):
             _st.markdown(f"**{title}**")
             _st.plotly_chart(_tz_spark(s), use_container_width=True, config={"displayModeBar": False})
         with cols[1]:
-            _st.markdown(f"""<div style='font-size:1.4rem;color:{color}'>{arrow} {delta*100:.1f}%</div>""", unsafe_allow_html=True)
+            _st.markdown(f"<div style='font-size:1.4rem;color:{color}'>{arrow} {delta*100:.1f}%</div>", unsafe_allow_html=True)
 
 def _render_trends_avancados(df):
     if _st is None: return
@@ -2053,7 +2047,7 @@ def _render_trends_avancados(df):
         with cols[i%2]:
             _st.markdown(f"**{title}**")
             _st.plotly_chart(_tz_spark(s), use_container_width=True, config={"displayModeBar": False})
-            _st.markdown(f"""<div style='font-size:1.1rem;color:{color}'>{arrow} {delta*100:.1f}%</div>""", unsafe_allow_html=True)
+            _st.markdown(f"<div style='font-size:1.1rem;color:{color}'>{arrow} {delta*100:.1f}%</div>", unsafe_allow_html=True)
 
 def _render_trends_por_motorista(df):
     if _st is None: return
@@ -2063,7 +2057,7 @@ def _render_trends_por_motorista(df):
     if not name_col or name_col not in df.columns:
         _st.info("Coluna de nome do motorista não encontrada (ex.: 'Cobrador/Operador').")
         return
-    # Série diária: grat_pag_ratio por motorista (agregado por dia)
+
     def _pag(df_):
         paying = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
         regex = [c for c in df_.columns if _pd.api.types.is_numeric_dtype(df_[c]) and _re.search(r"(?i)quant.*(inteir|passag|passe|vale|vt)", c) and not _re.search(r"(?i)grat|integr", c)]
@@ -2085,21 +2079,19 @@ def _render_trends_por_motorista(df):
     grp = d.groupby([name_col,"__d"]).agg(pag=("_pag","sum"), grat=("_grat","sum")).reset_index()
     grp["ratio"] = _np.where(grp["pag"]>0, grp["grat"]/grp["pag"], _np.nan)
 
-    # Para cada motorista, calcula delta (última janela vs anterior)
     deltas = []
     for mot, sub in grp.groupby(name_col):
         s = sub.set_index("__d")["ratio"].sort_index()
+        s = _tz_as_series(s)
         if s.dropna().empty: continue
         dlt = _tz_delta(s, win, "previous")
         deltas.append((mot, dlt, s))
     if not deltas:
         _st.info("Sem dados suficientes por motorista.")
         return
-    # Ordena por maior aumento (pior tendência)
     deltas.sort(key=lambda x: (x[1] if x[1] is not None else -999), reverse=True)
     top = deltas[:15]
 
-    # Tabela com setas coloridas (aumento é vermelho pois indica possível desvio)
     mot_names = [t[0] for t in top]
     dvals = [t[1] for t in top]
     arrows_colors = [_tz_arrow_alert(v) for v in dvals]
@@ -2110,19 +2102,17 @@ def _render_trends_por_motorista(df):
     })
     _st.dataframe(table, use_container_width=True)
 
-    # Sparklines individuais (até 5, para não poluir)
     _st.markdown("#### Sparklines (relação gratuidades/pagantes) — Top variações")
     rows = min(5, len(top))
-    cols = _st.columns(rows)
+    cols = _st.columns(rows) if rows > 0 else []
     for i in range(rows):
         mot, v, s = top[i]
         arrow, color = _tz_arrow_alert(v)
         with cols[i]:
             _st.markdown(f"**{mot}**")
             _st.plotly_chart(_tz_spark(s), use_container_width=True, config={"displayModeBar": False})
-            _st.markdown(f"""<div style='font-size:1.0rem;color:{color}'>{arrow} {v*100:.1f}%</div>""", unsafe_allow_html=True)
+            _st.markdown(f"<div style='font-size:1.0rem;color:{color}'>{arrow} {v*100:.1f}%</div>", unsafe_allow_html=True)
 
-# Safe render calls (after filters)
 try:
     _base_df = df_filtered.copy() if 'df_filtered' in globals() else df.copy()
     _render_trends_financeiro(_base_df)
@@ -2134,3 +2124,4 @@ except Exception as _e:
     except Exception:
         pass
 # === END TRENDS PANELS =========================================================
+
