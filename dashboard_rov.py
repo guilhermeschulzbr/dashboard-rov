@@ -36,6 +36,38 @@ try:
     from prophet import Prophet  # pip install prophet
 
 
+# === Helper: encontra/forma o DataFrame base ===
+def _ensure_base_df():
+    # 1) df já carregado
+    try:
+        if 'df' in globals() and isinstance(df, pd.DataFrame):
+            return df
+    except Exception:
+        pass
+    # 2) df_filtered já existe
+    try:
+        if 'df_filtered' in globals() and isinstance(df_filtered, pd.DataFrame):
+            return df_filtered
+    except Exception:
+        pass
+    # 3) session_state
+    try:
+        import streamlit as st
+        if 'df' in st.session_state and isinstance(st.session_state['df'], pd.DataFrame):
+            return st.session_state['df']
+    except Exception:
+        pass
+    # 4) Função de carga existente
+    try:
+        if 'load_data' in globals():
+            # tenta usar csv_path, se existir
+            cp = globals().get('csv_path', None)
+            return load_data(cp) if cp else load_data(None)
+    except Exception:
+        pass
+    return None
+
+
     _HAS_PROPHET = True
 except Exception:
     _HAS_PROPHET = False
@@ -509,10 +541,10 @@ st.sidebar.title("⚙️ Configurações")
 
 
 # === Upload CSV (no início de Configurações) ===============================
+
 uploaded_csv_cfg = st.sidebar.file_uploader("📤 Fazer upload de arquivo .CSV para incorporar", type=["csv"], key="cfg_csv_upload")
 def _read_csv_guess(file_obj):
     import pandas as _pd_local
-    # tenta auto-separador e diferentes encodings
     for enc in ["utf-8", "latin-1", "cp1252"]:
         try:
             file_obj.seek(0)
@@ -521,39 +553,43 @@ def _read_csv_guess(file_obj):
             continue
     file_obj.seek(0)
     return _pd_local.read_csv(file_obj, encoding_errors="ignore")
+
 if uploaded_csv_cfg is not None:
     try:
         df_new = _read_csv_guess(uploaded_csv_cfg)
-        # Normaliza nomes das colunas
         df_new.columns = [str(c).strip() for c in df_new.columns]
-        # Mescla com df existente
-        if 'df' in globals() and isinstance(df, pd.DataFrame):
-            # chaves candidatas p/ dedupe
-            keys = [c for c in [
-                "Data","Data Coleta","DataColeta",
-                "Nome Linha","Linha",
-                "Numero Veiculo","Nº Veiculo","Veiculo","Veículo",
-                "Data Hora Inicio Operacao","Data Hora Início Operação","DataHoraInicio"
-            ] if (c in df_new.columns and c in df.columns)]
-            df = pd.concat([df, df_new], ignore_index=True)
-            if keys:
-                df.drop_duplicates(subset=keys, inplace=True)
-                st.sidebar.success("CSV importado e incorporado à base (deduplicado por: " + ", ".join(keys) + ").")
-            else:
-                df.drop_duplicates(inplace=True)
-                st.sidebar.info("CSV importado e incorporado (dedupe por linha completa).")
-            # Atualiza df_filtered (filtros serão reprocessados após rerun)
-            try:
-                df_filtered = df.copy()
-            except Exception:
-                pass
-            # Força recarregar a página com os novos dados
-            st.experimental_rerun()
+        base_df = _ensure_base_df()
+        if base_df is None:
+            # não há df ainda; assume o CSV como base inicial
+            merged = df_new.copy()
         else:
-            st.sidebar.warning("DataFrame principal 'df' não encontrado. Não foi possível incorporar o CSV.")
+            merged = pd.concat([base_df, df_new], ignore_index=True)
+        # Deduplicação por chaves se existirem
+        keys = [c for c in [
+            "Data","Data Coleta","DataColeta",
+            "Nome Linha","Linha",
+            "Numero Veiculo","Nº Veiculo","Veiculo","Veículo",
+            "Data Hora Inicio Operacao","Data Hora Início Operação","DataHoraInicio"
+        ] if c in merged.columns]
+        if keys:
+            merged.drop_duplicates(subset=keys, inplace=True)
+            st.sidebar.success("CSV importado e incorporado à base (deduplicado por: " + ", ".join(keys) + ").")
+        else:
+            merged.drop_duplicates(inplace=True)
+            st.sidebar.info("CSV importado e incorporado (dedupe por linha completa).")
+        # Escreve de volta em globals e session_state para o restante do app usar
+        globals()['df'] = merged.copy()
+        globals()['df_filtered'] = merged.copy()
+        try:
+            import streamlit as st
+            st.session_state['df'] = merged.copy()
+        except Exception:
+            pass
+        st.experimental_rerun()
     except Exception as _e:
         st.sidebar.error(f"Falha ao importar CSV: {_e}")
-# ==========================================================================
+# =========================================================================="
+
 csv_path = st.sidebar.text_input("Arquivo de dados (CSV ';')", DEFAULT_PATH)
 if not os.path.exists(csv_path):
     st.error(f"Arquivo não encontrado: {csv_path}")
