@@ -33,7 +33,7 @@ def inject_compact_css(base_font_px=13, table_px=12, metric_value_rem=1.0, metri
     div[data-testid="stMetricLabel"] {{ font-size: {metric_label_rem}rem !important; }}
 
     /* Tabelas (st.dataframe e st.table) */
-    div[data-testid="stDataFrame"] div[role="grid"] *, div[role="gridcell"], div[role="rowgroup"] * {{
+    div[data-testid="stDataFrame"] div[role="grid"] *, div[role="gridcell"], div[role="rowgroup"] *, div[role="gridcell"], div[role="rowgroup"] * {{
         font-size: {table_px}px !important;
         line-height: 1.1 !important;
     }}
@@ -48,11 +48,12 @@ def inject_compact_css(base_font_px=13, table_px=12, metric_value_rem=1.0, metri
         margin-bottom: 0.2rem !important;
     }}
 
-    /* Reduzir padding dos blocos em colunas para evitar quebra/embolado */
+    /* Reduzir padding das colunas pra caber mais conteúdo */
     [data-testid="stHorizontalBlock"] > div {{
         padding-left: 0.4rem !important;
         padding-right: 0.4rem !important;
     }}
+
     /* Compactar altura dos cards de métricas */
     div[data-testid="metric-container"] {{ margin-bottom: 0.25rem !important; }}
     </style>
@@ -66,7 +67,6 @@ def inject_compact_css(base_font_px=13, table_px=12, metric_value_rem=1.0, metri
         h3=int(18*header_scale),
     )
     st.markdown(style, unsafe_allow_html=True)
-
 from datetime import date
 from io import BytesIO
 
@@ -117,7 +117,7 @@ def inject_compact_css(base_font_px=13, table_px=12, metric_value_rem=1.0, metri
     div[data-testid="stMetricLabel"] { font-size: {metric_label_rem}rem !important; }
 
     /* Tabelas (st.dataframe e st.table) */
-    div[data-testid="stDataFrame"] div[role="grid"] *, div[role="gridcell"], div[role="rowgroup"] * { 
+    div[data-testid="stDataFrame"] div[role="grid"] *, div[role="gridcell"], div[role="rowgroup"] *, div[role="gridcell"], div[role="rowgroup"] * { 
         font-size: {table_px}px !important; 
         line-height: 1.1 !important;
     }
@@ -155,8 +155,6 @@ try:
 except Exception:
     # fallback silencioso
     inject_compact_css()
-
-
 # ------------------------------
 # Persistência (arquivos JSON na mesma pasta do app)
 # ------------------------------
