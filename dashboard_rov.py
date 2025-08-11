@@ -1916,12 +1916,12 @@ def _tz_daily_series(df):
         regex = [c for c in df_.columns if _pd.api.types.is_numeric_dtype(df_[c]) and _re.search(r"(?i)quant.*(inteir|passag|passe|vale|vt)", c) and not _re.search(r"(?i)grat|integr", c)]
         cols = [c for c in paying if c in df_.columns] + [c for c in regex if c not in paying]
         if not cols: return _pd.Series(0, index=df_.index)
-        return _pd.to_numeric(df_[cols], errors="coerce").fillna(0).sum(axis=1)
+        return df_[cols].apply(_pd.to_numeric, errors="coerce").fillna(0).sum(axis=1)
 
     def _grat(df_):
         cols = [c for c in df_.columns if _re.search(r"(?i)grat", c) and not _re.search(r"(?i)integr", c)]
         if not cols: return _pd.Series(0, index=df_.index)
-        return _pd.to_numeric(df_[cols], errors="coerce").fillna(0).sum(axis=1)
+        return df_[cols].apply(_pd.to_numeric, errors="coerce").fillna(0).sum(axis=1)
 
     def _dist(df_):
         km_cols = [c for c in df_.columns if _re.search(r"(?i)\bkm\b|quil[oô]metr", c)]
@@ -2063,11 +2063,11 @@ def _render_trends_por_motorista(df):
         regex = [c for c in df_.columns if _pd.api.types.is_numeric_dtype(df_[c]) and _re.search(r"(?i)quant.*(inteir|passag|passe|vale|vt)", c) and not _re.search(r"(?i)grat|integr", c)]
         cols = [c for c in paying if c in df_.columns] + [c for c in regex if c not in paying]
         if not cols: return _pd.Series(0, index=df_.index)
-        return _pd.to_numeric(df_[cols], errors="coerce").fillna(0).sum(axis=1)
+        return df_[cols].apply(_pd.to_numeric, errors="coerce").fillna(0).sum(axis=1)
     def _grat(df_):
         cols = [c for c in df_.columns if _re.search(r"(?i)grat", c) and not _re.search(r"(?i)integr", c)]
         if not cols: return _pd.Series(0, index=df_.index)
-        return _pd.to_numeric(df_[cols], errors="coerce").fillna(0).sum(axis=1)
+        return df_[cols].apply(_pd.to_numeric, errors="coerce").fillna(0).sum(axis=1)
 
     d = df.copy()
     date_col = _tz_first(d, ["Data","Data Coleta","DataColeta"]) or "Data"
