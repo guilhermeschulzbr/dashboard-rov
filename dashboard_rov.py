@@ -579,7 +579,13 @@ if uploaded_csv_cfg is not None:
             st.session_state['df'] = merged.copy()
         except Exception:
             pass
+        try:
+    st.rerun()
+except Exception:
+    try:
         st.experimental_rerun()
+    except Exception:
+        pass
     except Exception as _e:
         st.sidebar.error(f"Falha ao importar CSV: {_e}")
 # =========================================================================="
