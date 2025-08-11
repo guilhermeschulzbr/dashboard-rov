@@ -379,7 +379,7 @@ def load_data(csv: object) -> pd.DataFrame:
 # ------------------------------
 # KM por linha com vigências
 # ------------------------------
-BASE_DATE_FOR_FALLBACK = pd.Timestamp("2025-08-01")
+BASE_DATE_FOR_FALLBACK = pd.Timestamp("2025-07-08")
 
 def load_km_store() -> dict:
     return load_json_config(CONFIG_PATH_KM)
@@ -411,7 +411,7 @@ def append_km_record(store: dict, line: str, inicio: pd.Timestamp, km: float, fi
     store[line] = vlist
 
 def km_for_date(vlist: list, when: pd.Timestamp) -> Optional[float]:
-    """Retorna km vigente na data 'when'; se não houver, tenta a vigência válida em 01/08/2025."""
+    """Retorna km vigente na data 'when'; se não houver, tenta a vigência válida em 08/07/2025."""
     when = pd.to_datetime(when, errors="coerce")
     if vlist and pd.notna(when):
         for rec in vlist:
@@ -526,7 +526,7 @@ with st.spinner("Carregando dados..."):
     df = load_data(uploaded_file)
 
 st.title("📊 Dashboard Operacional ROV")
-st.caption("*Baseado exclusivamente nas colunas existentes do arquivo `dados_ROV.csv`*")
+st.caption("*Baseado exclusivamente nos dados existentes do arquivo .CSV importado*")
 
 # ------------------------------
 # Classificação de Linhas (Urbana/Distrital) com persistência
