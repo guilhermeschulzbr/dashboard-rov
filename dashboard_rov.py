@@ -15,13 +15,6 @@ import plotly.express as px
 import streamlit as st
 from datetime import date
 from io import BytesIO
-# === Helper: rerun seguro (compat Streamlit) ===
-def _rerun_safe():
-    try:
-        import streamlit as st
-        _rerun_safe()
-    except Exception:
-        pass
 # === Helper: encontra/forma o DataFrame base ===
 def _ensure_base_df():
     try:
@@ -586,8 +579,31 @@ if uploaded_csv_cfg is not None:
             st.session_state['df'] = merged.copy()
         except Exception:
             pass
-        _rerun_safe()
-    except Exception as _e:
+        # limpa caches e força recarga
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+        try:
+            st.cache_resource.clear()
+        except Exception:
+            pass
+        try:
+            st.experimental_memo.clear()
+        except Exception:
+            pass
+        try:
+            st.experimental_singleton.clear()
+        except Exception:
+            pass
+        try:
+            st.rerun()
+        except Exception:
+            try:
+                st.experimental_rerun()
+            except Exception:
+                pass
+except Exception as _e:
         st.sidebar.error(f"Falha ao importar CSV: {_e}")
 # =========================================================================="
 
@@ -598,6 +614,16 @@ if not os.path.exists(csv_path):
 
 with st.spinner("Carregando dados..."):
     df = load_data(csv_path)
+
+    # — Adota DataFrame da sessão, se existir (permite sobrescrever carga por CSV importado)
+    try:
+        import streamlit as _st_mod
+        if 'df' in _st_mod.session_state and isinstance(_st_mod.session_state['df'], pd.DataFrame):
+            df = _st_mod.session_state['df'].copy()
+            globals()['df_filtered'] = df.copy()
+    except Exception:
+        pass
+
 
 st.title("📊 Dashboard Operacional ROV")
 st.caption("*Baseado exclusivamente nas colunas existentes do arquivo `dados_ROV.csv`*")
