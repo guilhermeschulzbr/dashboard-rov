@@ -88,6 +88,11 @@ def fmt_currency(x, nd=2):
 
 def fmt_pct(x, nd=1):
     try:
+        val = float(x) * 100.0
+        return f"{val:,.{nd}f}%".replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return "0,0%"
+
 
 # ------------------------------
 # Tendências / Período anterior (helpers reutilizáveis)
