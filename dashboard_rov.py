@@ -34,6 +34,18 @@ except Exception:
 
 try:
     from prophet import Prophet  # pip install prophet
+
+# --- Compat: garanta `st` e `_st` ---
+try:
+    import streamlit as st
+except Exception:
+    st = None
+try:
+    _st
+except NameError:
+    _st = st
+# -------------------------------------
+
     _HAS_PROPHET = True
 except Exception:
     _HAS_PROPHET = False
@@ -2180,4 +2192,3 @@ except Exception as _e:
     except Exception:
         pass
 # === END TRENDS PANELS =========================================================
-
