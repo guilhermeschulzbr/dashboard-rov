@@ -13,6 +13,60 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+
+
+def inject_compact_css(base_font_px=13, table_px=12, metric_value_rem=1.0, metric_label_rem=0.8, header_scale=0.9):
+    # Usamos .format e chaves escapadas {{ }} para CSS
+    style = """
+    <style>
+    /* Fonte base do app e da sidebar */
+    html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] * {{
+        font-size: {base_font_px}px !important;
+    }}
+    /* Cabeçalhos menores */
+    h1 {{ font-size: {h1}px !important; }}
+    h2 {{ font-size: {h2}px !important; }}
+    h3 {{ font-size: {h3}px !important; }}
+
+    /* Métricas (st.metric) */
+    div[data-testid="stMetricValue"] {{ font-size: {metric_value_rem}rem !important; line-height: 1.0 !important; }}
+    div[data-testid="stMetricLabel"] {{ font-size: {metric_label_rem}rem !important; }}
+
+    /* Tabelas (st.dataframe e st.table) */
+    div[data-testid="stDataFrame"] div[role="grid"] *, div[role="gridcell"], div[role="rowgroup"] * {{
+        font-size: {table_px}px !important;
+        line-height: 1.1 !important;
+    }}
+    div[data-testid="stTable"] table {{
+        font-size: {table_px}px !important;
+        line-height: 1.15 !important;
+    }}
+
+    /* Parágrafos/listas mais compactos */
+    .stMarkdown p, .stMarkdown li {{
+        line-height: 1.2 !important;
+        margin-bottom: 0.2rem !important;
+    }}
+
+    /* Reduzir padding dos blocos em colunas para evitar quebra/embolado */
+    [data-testid="stHorizontalBlock"] > div {{
+        padding-left: 0.4rem !important;
+        padding-right: 0.4rem !important;
+    }}
+    /* Compactar altura dos cards de métricas */
+    div[data-testid="metric-container"] {{ margin-bottom: 0.25rem !important; }}
+    </style>
+    """.format(
+        base_font_px=base_font_px,
+        table_px=table_px,
+        metric_value_rem=metric_value_rem,
+        metric_label_rem=metric_label_rem,
+        h1=int(28*header_scale),
+        h2=int(22*header_scale),
+        h3=int(18*header_scale),
+    )
+    st.markdown(style, unsafe_allow_html=True)
+
 from datetime import date
 from io import BytesIO
 
