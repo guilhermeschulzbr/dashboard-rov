@@ -2277,3 +2277,179 @@ except Exception as _e:
         _st.warning(f"Falha ao renderizar painel de suspeitas: {_e}")
     except Exception:
         pass
+
+
+
+# === Painel Rotatividade Motoristas x Veículos (injetado) ===
+VEIC_CANDIDATES = [
+    "Veículo","VEÍCULO","Veiculo","CARRO","Carro","Prefixo","Placa","VEIC","ID Veículo","ID_Veiculo","ID_Veículo"
+]
+MOT_CANDIDATES = [
+    "Cobrador/Operador","Operador","Motorista","MOTORISTA","Matricula","Matrícula","CPF Motorista","ID Motorista","ID_Motorista"
+]
+DT_CANDIDATES = [
+    "Data/Hora","DATA_HORA","data_hora","Timestamp","Data","DATA","dt","datetime"
+]
+
+def _find_col(df, candidates):
+    lower_map = {c.lower(): c for c in df.columns}
+    for cand in candidates:
+        if cand in df.columns:
+            return cand
+    for cand in candidates:
+        for col_lower, original in lower_map.items():
+            if cand.lower() == col_lower:
+                return original
+    return None
+
+def _kpi_value(v) -> str:
+    try:
+        return f"{int(v):,}".replace(",", ".")
+    except Exception:
+        try:
+            return f"{float(v):,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        except Exception:
+            return str(v)
+
+def show_rotatividade_motoristas_por_veiculo(
+    df,
+    veic_col=None,
+    mot_col=None,
+    dt_col=None,
+    titulo="Rotatividade de Motoristas por Veículo"
+):
+    if df is None or df.empty:
+        st.info("Sem dados no período selecionado.")
+        return
+
+    vcol = veic_col or _find_col(df, VEIC_CANDIDATES)
+    mcol = mot_col or _find_col(df, MOT_CANDIDATES)
+    dcol = dt_col or _find_col(df, DT_CANDIDATES)
+
+    if vcol is None or mcol is None:
+        st.warning(
+            "Não foi possível identificar as colunas de **veículo** e/ou **motorista**. "
+            "Informe-as via parâmetros `veic_col` e `mot_col`, se necessário."
+        )
+        return
+
+    work = df[[vcol, mcol]].copy()
+    work[vcol] = work[vcol].astype(str).str.strip()
+    work[mcol] = work[mcol].astype(str).str.strip()
+    work = work[(work[vcol] != "") & (work[mcol] != "")].dropna(subset=[vcol, mcol])
+
+    agg = (
+        work.groupby(vcol, dropna=False)[mcol]
+            .agg(
+                qtd_motoristas="nunique",
+                lista_motoristas=lambda s: sorted(set(s.astype(str)))
+            )
+            .reset_index()
+    )
+    agg["trocas_est"] = (agg["qtd_motoristas"] - 1).clip(lower=0)
+
+    if dcol and dcol in df.columns:
+        tmp = df[[vcol, mcol, dcol]].dropna(subset=[vcol, mcol])
+        tmp = tmp.sort_values(by=[vcol, dcol])
+        last = tmp.groupby(vcol, dropna=False).tail(1).rename(columns={mcol: "ultimo_motorista"})
+        last = last[[vcol, "ultimo_motorista"]]
+        agg = agg.merge(last, on=vcol, how="left")
+    else:
+        agg["ultimo_motorista"] = None
+
+    total_veiculos = len(agg)
+    media_motoristas = agg["qtd_motoristas"].mean() if total_veiculos else 0
+    apenas_um = int((agg["qtd_motoristas"] == 1).sum())
+    dois_ou_mais = int((agg["qtd_motoristas"] >= 2).sum())
+    if not agg.empty:
+        top_row = agg.sort_values("qtd_motoristas", ascending=False).iloc[0]
+        veic_top = str(top_row[vcol])
+        top_qtd = int(top_row["qtd_motoristas"])
+    else:
+        veic_top, top_qtd = "-", 0
+
+    st.markdown("## 🔄 Rotatividade Motoristas x Veículos")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Veículos com dados", _kpi_value(total_veiculos))
+    c2.metric("Média de motoristas/veículo", f"{media_motoristas:.2f}".replace(".", ","))
+    c3.metric("Veículos (1 motorista)", _kpi_value(apenas_um))
+    c4.metric("Veículos (2+ motoristas)", _kpi_value(dois_ou_mais))
+    c5.metric("Maior rotatividade", f"{_kpi_value(top_qtd)} (veíc. {veic_top})")
+
+    st.markdown("—")
+    colA, colB, colC = st.columns([1,1,2])
+    min_qtd = colA.number_input("Filtrar por quantidade mínima de motoristas", min_value=1, value=1, step=1, key="rot_min_qtd")
+    top_n   = colB.number_input("Top N veículos (0 = todos)", min_value=0, value=0, step=5, key="rot_top_n")
+    ordenar = colC.selectbox("Ordenar por", ["qtd_motoristas (desc)", "qtd_motoristas (asc)", vcol], key="rot_ordenar")
+
+    data = agg.copy()
+    data = data[data["qtd_motoristas"] >= min_qtd]
+    if ordenar == "qtd_motoristas (asc)":
+        data = data.sort_values("qtd_motoristas", ascending=True)
+    elif ordenar == vcol:
+        data = data.sort_values(vcol, ascending=True)
+    else:
+        data = data.sort_values("qtd_motoristas", ascending=False)
+
+    if top_n and top_n > 0:
+        data_plot = data.head(int(top_n))
+    else:
+        data_plot = data
+
+    if not data_plot.empty:
+        fig = px.bar(
+            data_plot,
+            x=vcol,
+            y="qtd_motoristas",
+            title="Quantidade de motoristas únicos por veículo (período selecionado)",
+            text="qtd_motoristas",
+        )
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_layout(xaxis_title="Veículo", yaxis_title="Qtde de motoristas", bargap=0.2, height=450)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Nenhum veículo atende ao filtro atual.")
+
+    st.markdown("#### Detalhamento")
+    table = data.copy().rename(columns={
+        vcol: "Veículo",
+        "qtd_motoristas": "Qtde de motoristas",
+        "trocas_est": "Trocas (estimadas)",
+        "ultimo_motorista": "Último motorista"
+    })
+    table["Motoristas (lista)"] = table["lista_motoristas"].apply(lambda xs: ", ".join(map(str, xs))[:2000])
+    table = table.drop(columns=["lista_motoristas"], errors="ignore")
+    st.dataframe(table, use_container_width=True, hide_index=True)
+
+    csv = table.to_csv(index=False).encode("utf-8-sig")
+    st.download_button("Baixar CSV (rotatividade por veículo)", data=csv, file_name="rotatividade_motoristas_por_veiculo.csv", mime="text/csv")
+# === Fim painel rotatividade ===
+
+
+
+# === Chamada do painel de Rotatividade (injetado) ===
+try:
+    _df_candidates = [
+        'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado'
+    ]
+    df_rot = None
+    for _name in _df_candidates:
+        if _name in globals():
+            _obj = globals()[_name]
+            try:
+                import pandas as _pd
+                if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
+                    df_rot = _obj
+                    break
+            except Exception:
+                pass
+    if df_rot is None and 'df' in globals():
+        df_rot = df
+
+    if df_rot is not None:
+        show_rotatividade_motoristas_por_veiculo(df_rot)
+    else:
+        st.info("Não foi possível encontrar o DataFrame filtrado. Ajuste o nome da variável ao chamar o painel.")
+except Exception as e:
+    st.warning(f"Falha ao renderizar painel de rotatividade: {e}")
+# === Fim chamada painel rotatividade ===
