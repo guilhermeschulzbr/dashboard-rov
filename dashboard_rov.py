@@ -2482,7 +2482,7 @@ try:
         df_rot = df
 
     if df_rot is not None:
-        show_rotatividade_motoristas_por_veiculo(df_rot)
+        show_rotatividade_motoristas_por_veiculo(df_rot, veic_col='Numero Veiculo')
     else:
         st.info("Não foi possível encontrar o DataFrame filtrado. Ajuste o nome da variável ao chamar o painel.")
 except Exception as e:
@@ -2588,84 +2588,91 @@ def _build_segments_events(df, vcol, lcol, tcol, day_start, day_end, idle_gap_mi
         segdf["Duração (min)"] = (segdf["Fim"] - segdf["Início"]).dt.total_seconds()/60.0
     return segdf
 
+
 def show_linha_do_tempo_alocacao_1dia(
     df,
-    veic_col=None,
-    linha_col=None,
-    dt_col=None,
-    start_col=None,
-    end_col=None,
-    titulo="📆 Linha do tempo de alocação (1 dia)"
+    titulo="📆 Linha do tempo de alocação (1 dia)",
 ):
     import pandas as pd
     import plotly.express as px
-    if df is None or df.empty:
-        st.info("Sem dados para a data selecionada.")
-        return
+    from datetime import date as _date
 
-    vcol = veic_col or _pick_col(df, ALOC_VEIC_CANDS)
-    lcol = linha_col or _pick_col(df, ALOC_LINHA_CANDS)
-    scol = start_col or _pick_col(df, ALOC_INI_CANDS)
-    ecol = end_col or _pick_col(df, ALOC_FIM_CANDS)
-    tcol = dt_col or _pick_col(df, ALOC_DT_CANDS)
+    # Colunas fixas conforme solicitado
+    vcol = "Numero Veiculo"
+    lcol = "Nome Linha"
+    scol = "Data Hora Inicio Operacao"
+    ecol = "Data Hora Final Operacao"
+
+    missing = [c for c in [vcol, lcol, scol, ecol] if c not in df.columns]
+    if missing:
+        st.error("Colunas ausentes para o painel de alocação (1 dia): " + ", ".join(missing))
+        return
 
     st.markdown("## " + titulo)
 
+    # Garantir tipos datetime
+    df = df.copy()
+    df[scol] = pd.to_datetime(df[scol], errors="coerce")
+    df[ecol] = pd.to_datetime(df[ecol], errors="coerce")
+
+    # Sugerir dia padrão a partir dos dados
+    sdates = df[scol].dropna().dt.date
+    edates = df[ecol].dropna().dt.date
     day_default = None
-    for c in [scol, ecol, tcol]:
-        if c and c in df.columns:
-            try:
-                s = pd.to_datetime(df[c], errors="coerce").dt.date.dropna()
-                if not s.empty:
-                    day_default = s.min()
-                    break
-            except Exception:
-                pass
-    if day_default is None:
-        from datetime import date as _date
+    if not sdates.empty:
+        day_default = sdates.min()
+    elif not edates.empty:
+        day_default = edates.min()
+    else:
         day_default = _date.today()
 
-    left, right = st.columns([2,3])
-    dia = left.date_input("Dia para análise (apenas 1 dia)", value=day_default, format="DD/MM/YYYY", key="aloc_dia")
-    modo = left.radio("Como interpretar os dados:", options=["Início/Fim por registro","Eventos por Data/Hora"], index=0 if (scol and ecol) else 1, horizontal=False, key="aloc_modo")
-    if modo == "Eventos por Data/Hora":
-        idle_gap = left.number_input("Considerar ocioso se gap > (min)", min_value=1, max_value=180, value=10, step=1, key="aloc_idle_gap")
-    else:
-        idle_gap = 10
+    # Seletor de 1 dia
+    dia = st.date_input("Dia para análise (apenas 1 dia)", value=day_default, format="DD/MM/YYYY", key="aloc_dia")
 
-    with st.expander("Selecionar colunas (se necessário)"):
-        cols = list(df.columns)
-        v_idx = _guess_index(cols, ["veic","veículo","veiculo","carro","prefixo","placa","bus","ônibus","onibus"])
-        l_idx = _guess_index(cols, ["linha","rota","serv","route","line","nome"])
-        t_idx = _guess_index(cols, ["data","hora","timestamp","dt","datetime"])
-        s_idx = _guess_index(cols, ["início","inicio","start","saída","partida"])
-        e_idx = _guess_index(cols, ["fim","término","termino","end","chegada"])
-        vcol = st.selectbox("Coluna de Veículo", cols, index=min(v_idx, len(cols)-1), key="aloc_pick_v")
-        lcol = st.selectbox("Coluna de Linha/Serviço", cols, index=min(l_idx, len(cols)-1), key="aloc_pick_l")
-        if modo == "Eventos por Data/Hora":
-            tcol = st.selectbox("Coluna de Data/Hora", cols, index=min(t_idx, len(cols)-1), key="aloc_pick_t")
-            scol = None; ecol=None
-        else:
-            scol = st.selectbox("Coluna de Início", cols, index=min(s_idx, len(cols)-1), key="aloc_pick_s")
-            ecol = st.selectbox("Coluna de Fim", cols, index=min(e_idx, len(cols)-1), key="aloc_pick_e")
-            tcol = None
-
+    # Janela do dia
     day_start = pd.Timestamp(dia).replace(hour=0, minute=0, second=0, microsecond=0)
     day_end   = day_start + pd.Timedelta(days=1)
 
-    if modo == "Início/Fim por registro" and scol and ecol:
-        seg = _build_segments_start_end(df, vcol, lcol, scol, ecol, day_start, day_end)
-    elif modo == "Eventos por Data/Hora" and tcol:
-        seg = _build_segments_events(df, vcol, lcol, tcol, day_start, day_end, idle_gap_min=int(idle_gap))
-    else:
-        st.warning("Configure corretamente as colunas para o modo selecionado.")
-        return
+    # Filtrar registros que tocam o dia
+    tmp = df[[vcol, lcol, scol, ecol]].dropna(subset=[scol, ecol, vcol]).copy()
+    # recorte ao dia (se um trecho cruza o dia, clip)
+    segs = []
+    for _, r in tmp.iterrows():
+        s = r[scol]; e = r[ecol]
+        if s is None or e is None:
+            continue
+        if e <= day_start or s >= day_end:
+            continue
+        s_clip = max(s, day_start)
+        e_clip = min(e, day_end)
+        if s_clip >= e_clip:
+            continue
+        segs.append({"Veículo": str(r[vcol]), "Linha": str(r[lcol]), "Início": s_clip, "Fim": e_clip})
 
-    if seg is None or seg.empty:
+    seg = pd.DataFrame(segs)
+    if seg.empty:
         st.info("Sem segmentos para o dia selecionado.")
         return
 
+    # Completar períodos ociosos por veículo para cobrir o dia todo
+    seg = seg.sort_values(["Veículo", "Início", "Fim"])
+    seg_ocioso = []
+    for veic, g in seg.groupby("Veículo"):
+        cur = day_start
+        for _, rr in g.iterrows():
+            if rr["Início"] > cur:
+                seg_ocioso.append({"Veículo": veic, "Linha": "Ocioso", "Início": cur, "Fim": rr["Início"]})
+            cur = max(cur, rr["Fim"])
+        if cur < day_end:
+            seg_ocioso.append({"Veículo": veic, "Linha": "Ocioso", "Início": cur, "Fim": day_end})
+    if seg_ocioso:
+        seg = pd.concat([seg, pd.DataFrame(seg_ocioso)], ignore_index=True).sort_values(["Veículo","Início"])
+
+    seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
+
+    # Filtros
     with st.expander("Filtros de exibição"):
+        seg["Veículo"] = seg["Veículo"].astype(str)  # garantir categórico por texto
         veics = sorted(seg["Veículo"].unique().tolist())
         linhas = sorted(seg["Linha"].astype(str).unique().tolist())
         pick_veics = st.multiselect("Filtrar Veículos", veics, default=veics[:min(20,len(veics))])
@@ -2675,23 +2682,28 @@ def show_linha_do_tempo_alocacao_1dia(
         st.info("Os filtros atuais não retornaram segmentos.")
         return
 
+    # Gráfico timeline (Veículo como categórico por texto)
+    segf = segf.copy()
+    segf["Veículo"] = segf["Veículo"].astype(str)
     fig = px.timeline(
         segf,
         x_start="Início",
         x_end="Fim",
         y="Veículo",
         color="Linha",
-        hover_data={"Duração (min)":":.1f","Veículo":True,"Linha":True,"Início":True,"Fim":True}
+        hover_data={"Duração (min)":":.1f","Veículo":True,"Linha":True,"Início":True,"Fim":True},
     )
-    fig.update_yaxes(autorange="reversed")
+    fig.update_yaxes(autorange="reversed", type="category")
     fig.update_layout(height=600, xaxis_title="Horário", yaxis_title="Veículo")
     st.plotly_chart(fig, use_container_width=True)
 
+    # Tabela + Download
     st.markdown("#### Segmentos gerados")
     st.dataframe(segf, use_container_width=True, hide_index=True)
     csv = segf.to_csv(index=False).encode("utf-8-sig")
     st.download_button("Baixar CSV da linha do tempo (1 dia)", data=csv, file_name="alocacao_veiculos_1dia.csv", mime="text/csv")
 # === Fim Painel: Linha do tempo de alocação (1 dia) ===
+
 
 
 # === Chamada: Linha do tempo de alocação (1 dia) ===
