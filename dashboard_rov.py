@@ -2280,6 +2280,7 @@ except Exception as _e:
 
 
 
+
 # === Painel Rotatividade Motoristas x Veículos (injetado) ===
 VEIC_CANDIDATES = [
     "Veículo","VEÍCULO","Veiculo","CARRO","Carro","Prefixo","Placa","VEIC","ID Veículo","ID_Veiculo","ID_Veículo"
@@ -2292,13 +2293,13 @@ DT_CANDIDATES = [
 ]
 
 def _find_col(df, candidates):
-    lower_map = {c.lower(): c for c in df.columns}
+    lower_map = {str(c).lower(): c for c in df.columns}
     for cand in candidates:
         if cand in df.columns:
             return cand
     for cand in candidates:
         for col_lower, original in lower_map.items():
-            if cand.lower() == col_lower:
+            if str(cand).lower() == col_lower:
                 return original
     return None
 
@@ -2311,6 +2312,14 @@ def _kpi_value(v) -> str:
         except Exception:
             return str(v)
 
+def _default_index(cols, keywords):
+    cols = list(cols)
+    for i, c in enumerate(cols):
+        name = str(c).lower()
+        if any(k in name for k in keywords):
+            return i
+    return 0 if cols else 0
+
 def show_rotatividade_motoristas_por_veiculo(
     df,
     veic_col=None,
@@ -2322,16 +2331,31 @@ def show_rotatividade_motoristas_por_veiculo(
         st.info("Sem dados no período selecionado.")
         return
 
+    # 1) Tentativa de auto-detecção
     vcol = veic_col or _find_col(df, VEIC_CANDIDATES)
     mcol = mot_col or _find_col(df, MOT_CANDIDATES)
     dcol = dt_col or _find_col(df, DT_CANDIDATES)
 
+    # 2) Se não encontrar, permitir seleção manual via UI (sem travar a execução)
     if vcol is None or mcol is None:
-        st.warning(
-            "Não foi possível identificar as colunas de **veículo** e/ou **motorista**. "
-            "Informe-as via parâmetros `veic_col` e `mot_col`, se necessário."
-        )
-        return
+        st.warning("Não foi possível identificar as colunas de **veículo** e/ou **motorista**. Selecione abaixo.")
+        with st.expander("Selecionar colunas manualmente", expanded=True):
+            cols = list(df.columns)
+            v_idx = _default_index(cols, ["veic","veículo","veiculo","carro","prefixo","placa","bus","ônibus","onibus"])
+            m_idx = _default_index(cols, ["motor","operador","cobrador","matric","cpf"])
+            vcol = st.selectbox("Coluna de Veículo", cols, index=min(v_idx, len(cols)-1), key="rot_pick_vcol")
+            mcol = st.selectbox("Coluna de Motorista", cols, index=min(m_idx, len(cols)-1), key="rot_pick_mcol")
+            # Data/hora opcional
+            d_idx = _default_index(cols, ["data","hora","timestamp","dt","datetime"])
+            usar_data = st.checkbox("Usar coluna de data/hora (opcional)", value=(d_idx is not None and len(cols)>0), key="rot_use_dt")
+            if usar_data and len(cols)>0:
+                dcol = st.selectbox("Coluna de Data/Hora", cols, index=min(d_idx, len(cols)-1), key="rot_pick_dcol")
+            else:
+                dcol = None
+
+    # Se ainda assim faltou algo essencial, aborta com aviso claro
+    if vcol is None or mcol is None:
+        st.stop()
 
     work = df[[vcol, mcol]].copy()
     work[vcol] = work[vcol].astype(str).str.strip()
@@ -2424,6 +2448,7 @@ def show_rotatividade_motoristas_por_veiculo(
     csv = table.to_csv(index=False).encode("utf-8-sig")
     st.download_button("Baixar CSV (rotatividade por veículo)", data=csv, file_name="rotatividade_motoristas_por_veiculo.csv", mime="text/csv")
 # === Fim painel rotatividade ===
+
 
 
 
