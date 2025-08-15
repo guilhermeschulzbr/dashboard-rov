@@ -2421,24 +2421,15 @@ def show_rotatividade_motoristas_por_veiculo(
         data_plot = data
 
     if not data_plot.empty:
-        # garantir eixo de veículo como DESCRIÇÃO (string/categórico)
-        data_plot = data_plot.copy()
-        data_plot["_veic_desc"] = data_plot[vcol].astype(str)
         fig = px.bar(
             data_plot,
-            x="_veic_desc",
+            x=vcol,
             y="qtd_motoristas",
             title="Quantidade de motoristas únicos por veículo (período selecionado)",
             text="qtd_motoristas",
         )
         fig.update_traces(textposition="outside", cliponaxis=False)
-        fig.update_layout(
-            xaxis_title="Veículo",
-            yaxis_title="Qtde de motoristas",
-            bargap=0.2,
-            height=450,
-            xaxis_type="category"
-        )
+        fig.update_layout(xaxis_title="Veículo", yaxis_title="Qtde de motoristas", bargap=0.2, height=450)
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Nenhum veículo atende ao filtro atual.")
@@ -2472,6 +2463,7 @@ try:
             _obj = globals()[_name]
             try:
                 import pandas as _pd
+from datetime import datetime, time, timedelta
                 if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
                     df_rot = _obj
                     break
@@ -2487,3 +2479,229 @@ try:
 except Exception as e:
     st.warning(f"Falha ao renderizar painel de rotatividade: {e}")
 # === Fim chamada painel rotatividade ===
+
+
+# === Chamada: Linha do tempo de alocação (1 dia) ===
+try:
+    _df_candidates = [
+        'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df'
+    ]
+    df_aloc = None
+    for _name in _df_candidates:
+        if _name in globals():
+            _obj = globals()[_name]
+            try:
+                import pandas as _pd
+                if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
+                    df_aloc = _obj
+                    break
+            except Exception:
+                pass
+    if df_aloc is not None:
+        show_linha_do_tempo_alocacao_1dia(df_aloc)
+    else:
+        st.info("Não foi possível localizar o DataFrame base para o painel de alocação (1 dia).")
+except Exception as e:
+    st.warning(f"Falha ao renderizar painel de alocação (1 dia): {e}")
+# === Fim chamada: Linha do tempo de alocação (1 dia) ===
+
+
+
+# === Painel: Linha do tempo de alocação (1 dia) ===
+ALOC_VEIC_CANDS = ["Veículo","VEÍCULO","Veiculo","CARRO","Carro","Prefixo","Placa","VEIC","ID Veículo","ID_Veiculo","ID_Veículo"]
+ALOC_LINHA_CANDS = ["Linha","Nº Linha","Nome Linha","Rota","Serviço","Servico","Line","Route","Linha Operada","Codigo Linha","Código Linha"]
+ALOC_DT_CANDS = ["Data/Hora","DATA_HORA","data_hora","Timestamp","Data","DATA","dt","datetime","Hora","Horario","Horário"]
+ALOC_INI_CANDS = ["Início","Inicio","Hora Início","Hora Inicio","Start","Hora Saída","Hora Partida","Saída","Partida","start","start_time"]
+ALOC_FIM_CANDS = ["Fim","Término","Termino","Hora Fim","End","Chegada","Hora Chegada","end","end_time"]
+
+def _pick_col(df, cands):
+    lower_map = {str(c).lower(): c for c in df.columns}
+    for c in cands:
+        if c in df.columns: return c
+    for c in cands:
+        if str(c).lower() in lower_map: return lower_map[str(c).lower()]
+    return None
+
+def _guess_index(cols, keywords):
+    cols = list(cols)
+    for i, c in enumerate(cols):
+        nm = str(c).lower()
+        if any(k in nm for k in keywords):
+            return i
+    return 0 if cols else 0
+
+def _clip_interval(a, b, lo, hi):
+    if a is None or b is None: return None, None
+    if b <= lo or a >= hi: return None, None
+    return max(a, lo), min(b, hi)
+
+def _build_segments_start_end(df, vcol, lcol, scol, ecol, day_start, day_end):
+    import pandas as pd
+    segs = []
+    tmp = df[[vcol, lcol, scol, ecol]].copy()
+    tmp[scol] = pd.to_datetime(tmp[scol], errors="coerce")
+    tmp[ecol] = pd.to_datetime(tmp[ecol], errors="coerce")
+    tmp = tmp.dropna(subset=[scol, ecol, vcol])
+    tmp = tmp.sort_values([vcol, scol, ecol])
+    for veic, g in tmp.groupby(vcol):
+        busy = []
+        for _, r in g.iterrows():
+            s, e = _clip_interval(r[scol], r[ecol], day_start, day_end)
+            if s is None or e is None or s >= e: 
+                continue
+            busy.append((s, e, str(r.get(lcol, "")) or "Ocioso?"))
+        busy.sort(key=lambda x: x[0])
+        cur = day_start
+        if not busy:
+            segs.append({"Veículo": str(veic), "Linha": "Ocioso", "Início": day_start, "Fim": day_end})
+        else:
+            for (s, e, linha) in busy:
+                if s > cur:
+                    segs.append({"Veículo": str(veic), "Linha": "Ocioso", "Início": cur, "Fim": s})
+                segs.append({"Veículo": str(veic), "Linha": str(linha) if str(linha).strip() else "Ocioso", "Início": s, "Fim": e})
+                cur = e
+            if cur < day_end:
+                segs.append({"Veículo": str(veic), "Linha": "Ocioso", "Início": cur, "Fim": day_end})
+    segdf = pd.DataFrame(segs)
+    if not segdf.empty:
+        segdf["Duração (min)"] = (segdf["Fim"] - segdf["Início"]).dt.total_seconds()/60.0
+    return segdf
+
+def _build_segments_events(df, vcol, lcol, tcol, day_start, day_end, idle_gap_min=10):
+    import pandas as pd
+    segs = []
+    tmp = df[[vcol, lcol, tcol]].copy()
+    tmp[tcol] = pd.to_datetime(tmp[tcol], errors="coerce")
+    tmp = tmp.dropna(subset=[tcol, vcol])
+    tmp = tmp[(tmp[tcol] >= day_start) & (tmp[tcol] <= day_end)]
+    tmp = tmp.sort_values([vcol, tcol])
+    for veic, g in tmp.groupby(vcol):
+        times = list(g[tcol].tolist())
+        lines = list(g[lcol].astype(str).fillna("").tolist()) if lcol in g.columns else [""]*len(times)
+        if not times:
+            continue
+        cur_start = times[0]
+        if cur_start > day_start:
+            segs.append({"Veículo": str(veic), "Linha": "Ocioso", "Início": day_start, "Fim": cur_start})
+        for i in range(len(times)-1):
+            s = times[i]; e = times[i+1]
+            ln = lines[i] if i < len(lines) else ""
+            gap = (e - s).total_seconds()/60.0
+            if gap > idle_gap_min:
+                mid = s + (e - s)*0.1
+                segs.append({"Veículo": str(veic), "Linha": str(ln) if str(ln).strip() else "Ocioso", "Início": s, "Fim": mid})
+                segs.append({"Veículo": str(veic), "Linha": "Ocioso", "Início": mid, "Fim": e})
+            else:
+                segs.append({"Veículo": str(veic), "Linha": str(ln) if str(ln).strip() else "Ocioso", "Início": s, "Fim": e})
+        last_t = times[-1]
+        if last_t < day_end:
+            segs.append({"Veículo": str(veic), "Linha": "Ocioso", "Início": last_t, "Fim": day_end})
+    segdf = pd.DataFrame(segs)
+    if not segdf.empty:
+        segdf["Duração (min)"] = (segdf["Fim"] - segdf["Início"]).dt.total_seconds()/60.0
+    return segdf
+
+def show_linha_do_tempo_alocacao_1dia(
+    df,
+    veic_col=None,
+    linha_col=None,
+    dt_col=None,
+    start_col=None,
+    end_col=None,
+    titulo="📆 Linha do tempo de alocação (1 dia)"
+):
+    import pandas as pd
+    import plotly.express as px
+    if df is None or df.empty:
+        st.info("Sem dados para a data selecionada.")
+        return
+
+    vcol = veic_col or _pick_col(df, ALOC_VEIC_CANDS)
+    lcol = linha_col or _pick_col(df, ALOC_LINHA_CANDS)
+    scol = start_col or _pick_col(df, ALOC_INI_CANDS)
+    ecol = end_col or _pick_col(df, ALOC_FIM_CANDS)
+    tcol = dt_col or _pick_col(df, ALOC_DT_CANDS)
+
+    st.markdown("## " + titulo)
+
+    day_default = None
+    for c in [scol, ecol, tcol]:
+        if c and c in df.columns:
+            try:
+                s = pd.to_datetime(df[c], errors="coerce").dt.date.dropna()
+                if not s.empty:
+                    day_default = s.min()
+                    break
+            except Exception:
+                pass
+    if day_default is None:
+        from datetime import date as _date
+        day_default = _date.today()
+
+    left, right = st.columns([2,3])
+    dia = left.date_input("Dia para análise (apenas 1 dia)", value=day_default, format="DD/MM/YYYY", key="aloc_dia")
+    modo = left.radio("Como interpretar os dados:", options=["Início/Fim por registro","Eventos por Data/Hora"], index=0 if (scol and ecol) else 1, horizontal=False, key="aloc_modo")
+    if modo == "Eventos por Data/Hora":
+        idle_gap = left.number_input("Considerar ocioso se gap > (min)", min_value=1, max_value=180, value=10, step=1, key="aloc_idle_gap")
+    else:
+        idle_gap = 10
+
+    with st.expander("Selecionar colunas (se necessário)"):
+        cols = list(df.columns)
+        v_idx = _guess_index(cols, ["veic","veículo","veiculo","carro","prefixo","placa","bus","ônibus","onibus"])
+        l_idx = _guess_index(cols, ["linha","rota","serv","route","line","nome"])
+        t_idx = _guess_index(cols, ["data","hora","timestamp","dt","datetime"])
+        s_idx = _guess_index(cols, ["início","inicio","start","saída","partida"])
+        e_idx = _guess_index(cols, ["fim","término","termino","end","chegada"])
+        vcol = st.selectbox("Coluna de Veículo", cols, index=min(v_idx, len(cols)-1), key="aloc_pick_v")
+        lcol = st.selectbox("Coluna de Linha/Serviço", cols, index=min(l_idx, len(cols)-1), key="aloc_pick_l")
+        if modo == "Eventos por Data/Hora":
+            tcol = st.selectbox("Coluna de Data/Hora", cols, index=min(t_idx, len(cols)-1), key="aloc_pick_t")
+            scol = None; ecol=None
+        else:
+            scol = st.selectbox("Coluna de Início", cols, index=min(s_idx, len(cols)-1), key="aloc_pick_s")
+            ecol = st.selectbox("Coluna de Fim", cols, index=min(e_idx, len(cols)-1), key="aloc_pick_e")
+            tcol = None
+
+    day_start = pd.Timestamp(dia).replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end   = day_start + pd.Timedelta(days=1)
+
+    if modo == "Início/Fim por registro" and scol and ecol:
+        seg = _build_segments_start_end(df, vcol, lcol, scol, ecol, day_start, day_end)
+    elif modo == "Eventos por Data/Hora" and tcol:
+        seg = _build_segments_events(df, vcol, lcol, tcol, day_start, day_end, idle_gap_min=int(idle_gap))
+    else:
+        st.warning("Configure corretamente as colunas para o modo selecionado.")
+        return
+
+    if seg is None or seg.empty:
+        st.info("Sem segmentos para o dia selecionado.")
+        return
+
+    with st.expander("Filtros de exibição"):
+        veics = sorted(seg["Veículo"].unique().tolist())
+        linhas = sorted(seg["Linha"].astype(str).unique().tolist())
+        pick_veics = st.multiselect("Filtrar Veículos", veics, default=veics[:min(20,len(veics))])
+        pick_linhas = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=linhas)
+        segf = seg[(seg["Veículo"].isin(pick_veics)) & (seg["Linha"].astype(str).isin(pick_linhas))]
+    if segf.empty:
+        st.info("Os filtros atuais não retornaram segmentos.")
+        return
+
+    fig = px.timeline(
+        segf,
+        x_start="Início",
+        x_end="Fim",
+        y="Veículo",
+        color="Linha",
+        hover_data={"Duração (min)":":.1f","Veículo":True,"Linha":True,"Início":True,"Fim":True}
+    )
+    fig.update_yaxes(autorange="reversed")
+    fig.update_layout(height=600, xaxis_title="Horário", yaxis_title="Veículo")
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("#### Segmentos gerados")
+    st.dataframe(segf, use_container_width=True, hide_index=True)
+    csv = segf.to_csv(index=False).encode("utf-8-sig")
+    st.download_button("Baixar CSV da linha do tempo (1 dia)", data=csv, file_name="alocacao_veiculos_1dia.csv", mime="text/csv")
+# === Fim Painel: Linha do tempo de alocação (1 dia) ===
