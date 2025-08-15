@@ -2283,13 +2283,13 @@ except Exception as _e:
 
 # === Painel Rotatividade Motoristas x Veículos (injetado) ===
 VEIC_CANDIDATES = [
-    "Veículo","VEÍCULO","Veiculo","CARRO","Carro","Prefixo","Placa","VEIC","ID Veículo","ID_Veiculo","ID_Veículo"
+    "Numero Veiculo"
 ]
 MOT_CANDIDATES = [
-    "Cobrador/Operador","Operador","Motorista","MOTORISTA","Matricula","Matrícula","CPF Motorista","ID Motorista","ID_Motorista"
+    "Cobrador/Operador"
 ]
 DT_CANDIDATES = [
-    "Data/Hora","DATA_HORA","data_hora","Timestamp","Data","DATA","dt","datetime"
+    "Data Hora Inicio Operacao"
 ]
 
 def _find_col(df, candidates):
