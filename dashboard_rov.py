@@ -2421,24 +2421,24 @@ def show_rotatividade_motoristas_por_veiculo(
         data_plot = data
 
     
-if not data_plot.empty:
+    if not data_plot.empty:
         # eixo Veículo como DESCRIÇÃO (string/categórico)
         data_plot = data_plot.copy()
         data_plot["_veic_desc"] = data_plot[vcol].astype(str)
         fig = px.bar(
-            data_plot,
-            x="_veic_desc",
-            y="qtd_motoristas",
-            title="Quantidade de motoristas únicos por veículo (período selecionado)",
-            text="qtd_motoristas",
+        data_plot,
+        x="_veic_desc",
+        y="qtd_motoristas",
+        title="Quantidade de motoristas únicos por veículo (período selecionado)",
+        text="qtd_motoristas",
         )
         fig.update_traces(textposition="outside", cliponaxis=False)
         fig.update_layout(
-            xaxis_title="Veículo",
-            yaxis_title="Qtde de motoristas",
-            bargap=0.2,
-            height=450,
-            xaxis_type="category"
+        xaxis_title="Veículo",
+        yaxis_title="Qtde de motoristas",
+        bargap=0.2,
+        height=450,
+        xaxis_type="category"
         )
         st.plotly_chart(fig, use_container_width=True)
     else:
@@ -2721,4 +2721,3 @@ try:
 except Exception as e:
     st.warning(f"Falha ao renderizar painel de alocação (1 dia): {e}")
 # === Fim chamada: Linha do tempo de alocação (1 dia) ===
-
