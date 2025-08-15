@@ -2598,6 +2598,9 @@ def show_linha_do_tempo_alocacao_1dia(
     from datetime import date as _date
 
     # Colunas fixas conforme solicitado
+    PASS_CANDS = ["Passageiros","Qtd Passageiros","Qtde Passageiros","Quantidade Passageiros","Validações","Validacoes","Validacao","Validação","Embarques","Qtde Embarques","Total Passageiros"]
+    # Procurar coluna de passageiros (opcional)
+    pcol = next((c for c in PASS_CANDS if c in df.columns), None)
     vcol = "Numero Veiculo"
     lcol = "Nome Linha"
     scol = "Data Hora Inicio Operacao"
@@ -2647,7 +2650,7 @@ def show_linha_do_tempo_alocacao_1dia(
         e_clip = min(e, day_end)
         if s_clip >= e_clip:
             continue
-        segs.append({"Veículo": str(r[vcol]), "Linha": str(r[lcol]), "Início": s_clip, "Fim": e_clip})
+        segs.append({"Veículo": str(r[vcol]), "Linha": str(r[lcol]), "Início": s_clip, "Fim": e_clip, "Passageiros": (r[pcol] if pcol and (pcol in r.index) else None)})
 
     seg = pd.DataFrame(segs)
     if seg.empty:
@@ -2669,13 +2672,18 @@ def show_linha_do_tempo_alocacao_1dia(
         seg = pd.concat([seg, pd.DataFrame(seg_ocioso)], ignore_index=True).sort_values(["Veículo","Início"])
 
     seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
+    # Flag de viagens com zero passageiros (apenas para segmentos não-ociosos)
+    if "Passageiros" in seg.columns:
+        seg["ZeroPass"] = (seg["Linha"].astype(str) != "Ocioso") & (seg["Passageiros"].fillna(-1) == 0)
+    else:
+        seg["ZeroPass"] = False
 
     # Filtros
     with st.expander("Filtros de exibição"):
         seg["Veículo"] = seg["Veículo"].astype(str)  # garantir categórico por texto
         veics = sorted(seg["Veículo"].unique().tolist())
         linhas = sorted(seg["Linha"].astype(str).unique().tolist())
-        pick_veics = st.multiselect("Filtrar Veículos", veics, default=veics[:min(20,len(veics))])
+        pick_veics = st.multiselect("Filtrar Veículos", veics, default=veics)
         pick_linhas = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=linhas)
         segf = seg[(seg["Veículo"].isin(pick_veics)) & (seg["Linha"].astype(str).isin(pick_linhas))]
     if segf.empty:
@@ -2691,7 +2699,9 @@ def show_linha_do_tempo_alocacao_1dia(
         x_end="Fim",
         y="Veículo",
         color="Linha",
-        hover_data={"Duração (min)":":.1f","Veículo":True,"Linha":True,"Início":True,"Fim":True},
+        pattern_shape="ZeroPass",
+        pattern_shape_map={True: "x", False: ""},
+        hover_data={"Duração (min)":":.1f","Passageiros":True,"ZeroPass":True,"Veículo":True,"Linha":True,"Início":True,"Fim":True},
     )
     fig.update_yaxes(autorange="reversed", type="category")
     fig.update_layout(height=600, xaxis_title="Horário", yaxis_title="Veículo")
