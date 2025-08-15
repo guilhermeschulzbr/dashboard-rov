@@ -2420,20 +2420,29 @@ def show_rotatividade_motoristas_por_veiculo(
     else:
         data_plot = data
 
-    if not data_plot.empty:
+    
+if not data_plot.empty:
+        # eixo Veículo como DESCRIÇÃO (string/categórico)
+        data_plot = data_plot.copy()
+        data_plot["_veic_desc"] = data_plot[vcol].astype(str)
         fig = px.bar(
             data_plot,
-            x=vcol,
+            x="_veic_desc",
             y="qtd_motoristas",
             title="Quantidade de motoristas únicos por veículo (período selecionado)",
             text="qtd_motoristas",
         )
         fig.update_traces(textposition="outside", cliponaxis=False)
-        fig.update_layout(xaxis_title="Veículo", yaxis_title="Qtde de motoristas", bargap=0.2, height=450)
+        fig.update_layout(
+            xaxis_title="Veículo",
+            yaxis_title="Qtde de motoristas",
+            bargap=0.2,
+            height=450,
+            xaxis_type="category"
+        )
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Nenhum veículo atende ao filtro atual.")
-
     st.markdown("#### Detalhamento")
     table = data.copy().rename(columns={
         vcol: "Veículo",
@@ -2481,29 +2490,7 @@ except Exception as e:
 # === Fim chamada painel rotatividade ===
 
 
-# === Chamada: Linha do tempo de alocação (1 dia) ===
-try:
-    _df_candidates = [
-        'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df'
-    ]
-    df_aloc = None
-    for _name in _df_candidates:
-        if _name in globals():
-            _obj = globals()[_name]
-            try:
-                import pandas as _pd
-                if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
-                    df_aloc = _obj
-                    break
-            except Exception:
-                pass
-    if df_aloc is not None:
-        show_linha_do_tempo_alocacao_1dia(df_aloc)
-    else:
-        st.info("Não foi possível localizar o DataFrame base para o painel de alocação (1 dia).")
-except Exception as e:
-    st.warning(f"Falha ao renderizar painel de alocação (1 dia): {e}")
-# === Fim chamada: Linha do tempo de alocação (1 dia) ===
+
 
 
 
@@ -2705,3 +2692,33 @@ def show_linha_do_tempo_alocacao_1dia(
     csv = segf.to_csv(index=False).encode("utf-8-sig")
     st.download_button("Baixar CSV da linha do tempo (1 dia)", data=csv, file_name="alocacao_veiculos_1dia.csv", mime="text/csv")
 # === Fim Painel: Linha do tempo de alocação (1 dia) ===
+
+
+# === Chamada: Linha do tempo de alocação (1 dia) ===
+# (guarded to evitar NameError se a função não estiver carregada ainda)
+try:
+    if 'show_linha_do_tempo_alocacao_1dia' in globals():
+        _df_candidates = [
+            'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df'
+        ]
+        df_aloc = None
+        for _name in _df_candidates:
+            if _name in globals():
+                _obj = globals()[_name]
+                try:
+                    import pandas as _pd
+                    if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
+                        df_aloc = _obj
+                        break
+                except Exception:
+                    pass
+        if df_aloc is not None:
+            show_linha_do_tempo_alocacao_1dia(df_aloc)
+        else:
+            st.info("Não foi possível localizar o DataFrame base para o painel de alocação (1 dia).")
+    else:
+        st.info("Painel de alocação (1 dia) carregado, mas a função ainda não foi definida nesta execução.")
+except Exception as e:
+    st.warning(f"Falha ao renderizar painel de alocação (1 dia): {e}")
+# === Fim chamada: Linha do tempo de alocação (1 dia) ===
+
