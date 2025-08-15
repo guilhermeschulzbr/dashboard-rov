@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from io import BytesIO
 
 # ---- IA (imports opcionais) ----
@@ -2463,7 +2463,7 @@ try:
             _obj = globals()[_name]
             try:
                 import pandas as _pd
-from datetime import datetime, time, timedelta
+
                 if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
                     df_rot = _obj
                     break
