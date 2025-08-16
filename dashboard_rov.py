@@ -2730,7 +2730,7 @@ def show_linha_do_tempo_alocacao_1dia(
 
 
 # === Chamada: Linha do tempo de alocação (1 dia) ===
-# (guarded to evitar NameError se a função não estiver carregada ainda)
+# (guarded para evitar NameError se a função ainda não estiver carregada)
 try:
     if 'show_linha_do_tempo_alocacao_1dia' in globals():
         _df_candidates = [
@@ -2756,6 +2756,7 @@ try:
 except Exception as e:
     st.warning(f"Falha ao renderizar painel de alocação (1 dia): {e}")
 # === Fim chamada: Linha do tempo de alocação (1 dia) ===
+
 
 
 # === Painel: Linha do tempo - Motoristas x Linhas (1 dia) ===
