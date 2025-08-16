@@ -2650,6 +2650,23 @@ def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocaç
     except Exception:
         pass
     # --- fim ordenação ---
+
+    # --- Ordenação cronológica por início de viagem (eixo Y: Motorista_Label) ---
+    try:
+        _order_motorista = (segf.groupby('Motorista_Label')['Início'].min().sort_values().index.tolist())
+        _order_motorista_plot = list(reversed(_order_motorista))  # y-axis será invertido abaixo
+    except Exception:
+        try:
+            import pandas as _pd
+            _order_motorista_plot = list(_pd.unique(segf['Motorista_Label']))
+        except Exception:
+            _order_motorista_plot = []
+    # Garantir ordem cronológica dos segmentos no eixo X
+    try:
+        segf = segf.sort_values(by=['Início','Fim'], ascending=[True, True], kind='mergesort')
+    except Exception:
+        pass
+    # --- fim ordenação ---
     fig = px.timeline(
         segf,
         x_start="Início",
@@ -2835,11 +2852,79 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
     segf['Motorista_Label'] = segf['Motorista'].map(mot_label_map).fillna(segf['Motorista'].astype(str))
 
 
+
+    # --- Ordenação cronológica por início de viagem (eixo Y: Motorista_Label) ---
+    try:
+        _order_motorista = (segf.groupby('Motorista_Label')['Início'].min().sort_values().index.tolist())
+        _order_motorista_plot = list(reversed(_order_motorista))  # y-axis será invertido abaixo
+    except Exception:
+        try:
+            import pandas as _pd
+            _order_motorista_plot = list(_pd.unique(segf['Motorista_Label']))
+        except Exception:
+            _order_motorista_plot = []
+    # Garantir ordem cronológica dos segmentos no eixo X
+    try:
+        segf = segf.sort_values(by=['Início','Fim'], ascending=[True, True], kind='mergesort')
+    except Exception:
+        pass
+    # --- fim ordenação ---
+
+    # --- Ordenação cronológica por início de viagem (eixo Y: Motorista_Label) ---
+    try:
+        _order_motorista = (segf.groupby('Motorista_Label')['Início'].min().sort_values().index.tolist())
+        _order_motorista_plot = list(reversed(_order_motorista))  # y-axis será invertido abaixo
+    except Exception:
+        try:
+            import pandas as _pd
+            _order_motorista_plot = list(_pd.unique(segf['Motorista_Label']))
+        except Exception:
+            _order_motorista_plot = []
+    # Garantir ordem cronológica dos segmentos no eixo X
+    try:
+        segf = segf.sort_values(by=['Início','Fim'], ascending=[True, True], kind='mergesort')
+    except Exception:
+        pass
+    # --- fim ordenação ---
+
+    # --- Ordenação cronológica por início de viagem (eixo Y: Motorista_Label) ---
+    try:
+        _order_motorista = (segf.groupby('Motorista_Label')['Início'].min().sort_values().index.tolist())
+        _order_motorista_plot = list(reversed(_order_motorista))  # y-axis será invertido abaixo
+    except Exception:
+        try:
+            import pandas as _pd
+            _order_motorista_plot = list(_pd.unique(segf['Motorista_Label']))
+        except Exception:
+            _order_motorista_plot = []
+    # Garantir ordem cronológica dos segmentos no eixo X
+    try:
+        segf = segf.sort_values(by=['Início','Fim'], ascending=[True, True], kind='mergesort')
+    except Exception:
+        pass
+    # --- fim ordenação ---
+
+    # --- Ordenação cronológica por início de viagem (eixo Y: Motorista_Label) ---
+    try:
+        _order_motorista = (segf.groupby('Motorista_Label')['Início'].min().sort_values().index.tolist())
+        _order_motorista_plot = list(reversed(_order_motorista))  # y-axis será invertido abaixo
+    except Exception:
+        try:
+            import pandas as _pd
+            _order_motorista_plot = list(_pd.unique(segf['Motorista_Label']))
+        except Exception:
+            _order_motorista_plot = []
+    # Garantir ordem cronológica dos segmentos no eixo X
+    try:
+        segf = segf.sort_values(by=['Início','Fim'], ascending=[True, True], kind='mergesort')
+    except Exception:
+        pass
+    # --- fim ordenação ---
     fig = px.timeline(
         segf,
         x_start="Início",
         x_end="Fim",
-        y='Motorista_Label',
+        y='Motorista_Label', category_orders={'Motorista_Label': _order_motorista_plot}, 
         color="Linha",
         pattern_shape="ZeroPass" if "ZeroPass" in segf.columns else None,
         pattern_shape_map={True: "x", False: ""} if "ZeroPass" in segf.columns else None,
@@ -3017,6 +3102,23 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
     segf['Motorista_Label'] = segf['Motorista'].map(mot_label_map).fillna(segf['Motorista'].astype(str))
 
 
+
+    # --- Ordenação cronológica por início de viagem (eixo Y: Motorista_Label) ---
+    try:
+        _order_motorista = (segf.groupby('Motorista_Label')['Início'].min().sort_values().index.tolist())
+        _order_motorista_plot = list(reversed(_order_motorista))  # y-axis será invertido abaixo
+    except Exception:
+        try:
+            import pandas as _pd
+            _order_motorista_plot = list(_pd.unique(segf['Motorista_Label']))
+        except Exception:
+            _order_motorista_plot = []
+    # Garantir ordem cronológica dos segmentos no eixo X
+    try:
+        segf = segf.sort_values(by=['Início','Fim'], ascending=[True, True], kind='mergesort')
+    except Exception:
+        pass
+    # --- fim ordenação ---
 
     # --- Ordenação cronológica por início de viagem (eixo Y: Motorista_Label) ---
     try:
