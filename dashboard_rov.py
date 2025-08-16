@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
 # ============================================================
+# Dashboard Operacional ROV (aprimorado: suporta CSV ou Excel; autodetecção de separador; cache de carregamento)
+# Execução: streamlit run dashboard_rov_improved.py
+# ============================================================
+
+# -*- coding: utf-8 -*-
+# ============================================================
 # Dashboard Operacional ROV (apenas com dados do arquivo)
 # Execução: streamlit run dashboard_rov.py
 # Requisitos: streamlit, pandas, plotly, numpy, python-dateutil, statsmodels (opcional)
@@ -230,31 +236,101 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
 # Carregamento de dados
 # ------------------------------
 @st.cache_data(show_spinner=False)
-def load_data(csv: object) -> pd.DataFrame:
-    """Carrega o CSV (sep=';'), normaliza tipos e deriva colunas úteis.
 
-    Aceita tanto um caminho de arquivo (str) quanto um objeto semelhante a arquivo
-    retornado pelo st.file_uploader. Tenta diferentes codificações para abrir o
-    arquivo e lança um erro se nenhuma delas for válida.
+@st.cache_data(show_spinner=False)
+def load_data(file_obj: object) -> pd.DataFrame:
+    """Carrega dados a partir de CSV (delimitador auto) ou Excel (.xlsx/.xls).
+    - Detecta automaticamente separador (tentando None, ';', ',', '\t')
+    - Tenta codificações comuns no Brasil (utf-8-sig, utf-8, latin-1)
+    - Mantém o restante do pipeline de limpeza/engenharia existente.
+    Aceita caminho (str) ou objeto retornado por st.file_uploader.
     """
-    encodings = ["utf-8", "latin-1"]
+    import io, csv
+
+    encodings = ["utf-8-sig", "utf-8", "latin-1"]
     last_err = None
     df: Optional[pd.DataFrame] = None
-    for enc in encodings:
+
+    # Se recebemos um caminho, apenas detecta extensão
+    file_name = None
+    if isinstance(file_obj, str):
+        file_name = file_obj
+        lower = file_name.lower()
+        is_excel = lower.endswith(".xlsx") or lower.endswith(".xls")
+        if is_excel:
+            try:
+                df = pd.read_excel(file_obj)
+            except Exception as e:
+                last_err = e
+        else:
+            # Tentativas para CSV
+            for enc in encodings:
+                for sep in (None, ";", ",", "\t"):
+                    try:
+                        if sep is None:
+                            df = pd.read_csv(file_obj, sep=None, engine="python", encoding=enc)
+                        else:
+                            df = pd.read_csv(file_obj, sep=sep, encoding=enc)
+                        break
+                    except Exception as e:
+                        last_err = e
+                        df = None
+                        continue
+                if df is not None:
+                    break
+    else:
+        # Objeto arquivo do Streamlit: lemos bytes uma única vez
+        raw_bytes = None
         try:
-            # Se for um objeto de arquivo, reposiciona o cursor no início antes de ler
-            if hasattr(csv, "read"):
+            file_name = getattr(file_obj, "name", None)
+        except Exception:
+            file_name = None
+        try:
+            # tentar .getvalue() (UploadedFile), senão .read()
+            if hasattr(file_obj, "getvalue"):
+                raw_bytes = file_obj.getvalue()
+            else:
+                # reposiciona e lê
                 try:
-                    csv.seek(0)
+                    file_obj.seek(0)
                 except Exception:
                     pass
-                df = pd.read_csv(csv, sep=";", encoding=enc)
-            else:
-                df = pd.read_csv(csv, sep=";", encoding=enc)
-            break
+                raw_bytes = file_obj.read()
         except Exception as e:
             last_err = e
-            continue
+            raw_bytes = None
+
+        if raw_bytes is not None:
+            lower = (file_name or "").lower()
+            is_excel = lower.endswith(".xlsx") or lower.endswith(".xls")
+            if is_excel:
+                try:
+                    df = pd.read_excel(io.BytesIO(raw_bytes))
+                except Exception as e:
+                    last_err = e
+            if df is None:
+                # Tentar como CSV em várias codificações/separadores
+                for enc in encodings:
+                    try:
+                        text = raw_bytes.decode(enc, errors="replace")
+                    except Exception:
+                        # Se decode falhar, segue para próxima codificação
+                        continue
+                    for sep in (None, ";", ",", "\t"):
+                        try:
+                            bio = io.StringIO(text)
+                            if sep is None:
+                                df = pd.read_csv(bio, sep=None, engine="python")
+                            else:
+                                df = pd.read_csv(bio, sep=sep)
+                            break
+                        except Exception as e:
+                            last_err = e
+                            df = None
+                            continue
+                    if df is not None:
+                        break
+
     if df is None:
         raise RuntimeError(f"Falha ao ler o CSV. Último erro: {last_err}")
 
@@ -517,7 +593,7 @@ def apply_veic_vigente(df_in: pd.DataFrame, store: dict) -> pd.DataFrame:
 # ------------------------------
 st.sidebar.title("⚙️ Configurações")
 # Campo para upload de arquivo CSV pelo usuário
-uploaded_file = st.sidebar.file_uploader("Carregue o arquivo de dados (CSV ';')", type=["csv"])
+uploaded_file = st.sidebar.file_uploader("Carregue o arquivo de dados (CSV ou Excel)", type=["csv","xlsx","xls"])
 if uploaded_file is None:
     st.sidebar.info("Por favor, faça upload do arquivo CSV.")
     st.stop()
