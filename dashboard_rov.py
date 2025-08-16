@@ -2421,6 +2421,9 @@ def show_rotatividade_motoristas_por_veiculo(
         data_plot = data
 
     if not data_plot.empty:
+        # Garantir eixo Veículo como descrição
+        data_plot[vcol] = data_plot[vcol].astype(str)
+
         fig = px.bar(
             data_plot,
             x=vcol,
@@ -2428,6 +2431,7 @@ def show_rotatividade_motoristas_por_veiculo(
             title="Quantidade de motoristas únicos por veículo (período selecionado)",
             text="qtd_motoristas",
         )
+        fig.update_xaxes(type='category')
         fig.update_traces(textposition="outside", cliponaxis=False)
         fig.update_layout(xaxis_title="Veículo", yaxis_title="Qtde de motoristas", bargap=0.2, height=450)
         st.plotly_chart(fig, use_container_width=True)
