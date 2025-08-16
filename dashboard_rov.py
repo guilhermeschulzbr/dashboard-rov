@@ -630,17 +630,186 @@ def show_tabela_horas_motoristas_periodo(df, titulo="🗓️ Tabela de horas por
     csv = csv_out.to_csv(index=True, encoding="utf-8-sig")
     st.download_button("Baixar CSV (horas por motorista × dia)", data=csv, file_name="horas_motoristas_por_dia.csv", mime="text/csv")
 
+
+# ==============================
+# Painel: Resumo Geral do Período (KPIs + gráficos)
+# ==============================
+def show_resumo_geral_periodo(df, titulo="📊 Resumo Geral do Período"):
+    import plotly.express as px
+    st.markdown("## " + titulo)
+
+    vcol, lcol = "Numero Veiculo", "Nome Linha"
+    scol, ecol = "Data Hora Inicio Operacao", "Data Hora Final Operacao"
+    mcol = _detect_motorista_col(df)
+
+    missing_base = [c for c in [scol, ecol] if c not in df.columns]
+    if missing_base:
+        st.error("Colunas de data/tempo ausentes: " + ", ".join(missing_base))
+        return
+
+    base = df.copy()
+    base[scol] = pd.to_datetime(base[scol], errors="coerce")
+    base[ecol] = pd.to_datetime(base[ecol], errors="coerce")
+
+    # Detectar passageiros (total -> senão pagantes+gratuidade)
+    CAND_PASS_TOTAL = ["Passageiros","Qtd Passageiros","Qtde Passageiros","Quantidade Passageiros",
+                       "Total Passageiros","Passageiros Transportados","Qtd de Passageiros","Quantidade de Passageiros"]
+    CAND_PAGANTES   = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte",
+                       "Pagantes","Quantidade Pagantes","Qtd Pagantes","Qtde Pagantes",
+                       "Validações","Validacoes","Validacao","Validação","Embarques","Embarcados"]
+    CAND_GRAT       = ["Quant Gratuidade","Qtd Gratuidade","Qtde Gratuidade",
+                       "Gratuidades","Gratuidade","Quantidade Gratuidade"]
+    pass_cols_total = [c for c in CAND_PASS_TOTAL if c in base.columns]
+    pag_cols = [c for c in CAND_PAGANTES if c in base.columns]
+    gra_cols = [c for c in CAND_GRAT if c in base.columns]
+
+    def _row_pax(row):
+        import pandas as _pd
+        if pass_cols_total:
+            v = _pd.to_numeric(row[pass_cols_total[0]], errors="coerce")
+            return 0.0 if _pd.isna(v) else float(v)
+        tot = 0.0
+        for c in pag_cols + gra_cols:
+            if c in row.index:
+                v = _pd.to_numeric(row[c], errors="coerce")
+                if _pd.notna(v): tot += float(v)
+        return tot
+
+    # Filtros de período + entidades
+    sdates = base[scol].dropna().dt.date
+    edates = base[ecol].dropna().dt.date
+    from datetime import date as _date
+    start_default = (sdates.min() if not sdates.empty else (edates.min() if not edates.empty else _date.today()))
+    end_default   = (edates.max() if not edates.empty else (sdates.max() if not sdates.empty else _date.today()))
+    c1,c2 = st.columns(2)
+    with c1:
+        dt_ini = st.date_input("Início do período", value=start_default, format="DD/MM/YYYY", key="res_dtini")
+    with c2:
+        dt_fim = st.date_input("Fim do período", value=end_default, format="DD/MM/YYYY", key="res_dtfim")
+    if dt_fim < dt_ini:
+        st.warning("A data final é anterior à inicial.")
+        return
+    _ini = pd.Timestamp(dt_ini).normalize()
+    _fim = pd.Timestamp(dt_fim).normalize() + pd.Timedelta(days=1)
+    base = base[ base[scol].notna() & base[ecol].notna() & (base[ecol] > _ini) & (base[scol] < _fim) ]
+    if base.empty:
+        st.info("Sem registros no período selecionado."); return
+
+    # Filtros adicionais
+    with st.expander("Filtros adicionais (opcionais)"):
+        if vcol in base.columns:
+            veics = sorted(base[vcol].astype(str).dropna().unique().tolist())
+            pick_veic = st.multiselect("Veículos", veics, default=veics, key="res_filt_vei")
+        else:
+            pick_veic = []
+        if lcol in base.columns:
+            linhas = sorted(base[lcol].astype(str).dropna().unique().tolist())
+            pick_lin = st.multiselect("Linhas/Serviços", linhas, default=linhas, key="res_filt_lin")
+        else:
+            pick_lin = []
+        if mcol and mcol in base.columns:
+            mots = sorted(base[mcol].astype(str).dropna().unique().tolist())
+            pick_mot = st.multiselect("Motoristas", mots, default=mots, key="res_filt_mot")
+        else:
+            pick_mot = []
+
+    if pick_veic:
+        base = base[ base[vcol].astype(str).isin(pick_veic) ]
+    if pick_lin:
+        base = base[ base[lcol].astype(str).isin(pick_lin) ]
+    if pick_mot:
+        base = base[ base[mcol].astype(str).isin(pick_mot) ]
+
+    if base.empty:
+        st.info("Sem registros após os filtros aplicados."); return
+
+    # KPIs
+    base["_dur_min"] = (base[ecol]-base[scol]).dt.total_seconds()/60.0
+    base["_pax"] = base.apply(_row_pax, axis=1)
+    veics_n = base[vcol].astype(str).nunique() if vcol in base.columns else 0
+    linhas_n = base[lcol].astype(str).nunique() if lcol in base.columns else 0
+    mots_n = base[mcol].astype(str).nunique() if mcol and mcol in base.columns else 0
+    viagens_n = len(base)
+    pax_total = float(pd.to_numeric(base["_pax"], errors="coerce").fillna(0).sum())
+    dur_total_min = float(pd.to_numeric(base["_dur_min"], errors="coerce").fillna(0).sum())
+    pph = (pax_total / (dur_total_min/60.0)) if dur_total_min>0 else 0.0
+
+    k1,k2,k3,k4,k5 = st.columns(5)
+    k1.metric("Veículos", f"{veics_n}")
+    k2.metric("Linhas/Serviços", f"{linhas_n}")
+    k3.metric("Motoristas", f"{mots_n}")
+    k4.metric("Viagens (registros)", f"{viagens_n}")
+    k5.metric("Passageiros/Hora", f"{pph:.1f}")
+
+    # Gráficos
+    g1,g2 = st.columns(2)
+
+    # 1) Top Linhas por passageiros
+    if lcol in base.columns:
+        top_lin = (base.groupby(lcol, observed=False)["_pax"].sum()
+                        .sort_values(ascending=False).head(10).reset_index())
+        with g1:
+            fig1 = px.bar(top_lin, x="_pax", y=lcol, orientation="h", text="_pax",
+                          title="Top 10 Linhas por Passageiros")
+            fig1.update_yaxes(type="category", autorange="reversed")
+            st.plotly_chart(fig1, use_container_width=True)
+
+    # 2) Passageiros por hora (com base no início da operação)
+    base["_hora_ini"] = base[scol].dt.floor("H")
+    pax_hora = (base.groupby("_hora_ini", observed=False)["_pax"].sum().reset_index())
+    with g2:
+        if not pax_hora.empty:
+            fig2 = px.line(pax_hora, x="_hora_ini", y="_pax", markers=True, title="Passageiros por Hora")
+            st.plotly_chart(fig2, use_container_width=True)
+
+    # 3) Top Motoristas por horas trabalhadas
+    if mcol and mcol in base.columns:
+        top_mot = (base.groupby(mcol, observed=False)["_dur_min"].sum()
+                        .sort_values(ascending=False).head(10).reset_index())
+        top_mot["_dur_fmt"] = top_mot["_dur_min"].map(_fmt_hhmm)
+        fig3 = px.bar(top_mot, x="_dur_min", y=mcol, orientation="h", text="_dur_fmt",
+                      title="Top 10 Motoristas por Horas Trabalhadas")
+        fig3.update_yaxes(type="category", autorange="reversed")
+        st.plotly_chart(fig3, use_container_width=True)
+
+    # 4) Duração das viagens (histograma)
+    fig4 = px.histogram(base, x="_dur_min", nbins=30, title="Distribuição da Duração das Viagens (min)")
+    st.plotly_chart(fig4, use_container_width=True)
+
+    # Tabela + CSV do período filtrado (colunas principais)
+    st.markdown("#### Dados — Período Filtrado")
+    show_cols = [c for c in [vcol, lcol, scol, ecol, mcol] if c and c in base.columns] + ["_pax","_dur_min"]
+    view = base[show_cols].rename(columns={"_pax":"Passageiros (estim.)", "_dur_min":"Duração (min)"})
+    st.dataframe(view, use_container_width=True, hide_index=True)
+    _csv = view.to_csv(index=False).encode("utf-8-sig")
+    st.download_button("Baixar CSV — Período Filtrado", data=_csv, file_name="resumo_periodo_filtrado.csv", mime="text/csv", key="dl_resumo_periodo")
+
 # ==============================
 # Execução: descobrir DF e renderizar painéis
 # ==============================
+
 df_candidate = _pick_df()
 
 if df_candidate is None:
     st.warning("Nenhum DataFrame detectado automaticamente. Carregue os dados ou verifique os nomes das variáveis.")
 else:
-    # Ordem sugerida: timelines, rotatividade, tabela de horas
-    show_linha_do_tempo_alocacao_1dia(df_candidate)
-    show_linha_do_tempo_motoristas_linhas_1dia(df_candidate)
-    show_linha_do_tempo_motoristas_veiculos_1dia(df_candidate)
-    show_rotatividade_motoristas_veiculos(df_candidate)
-    show_tabela_horas_motoristas_periodo(df_candidate)
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "Resumo (Período)", 
+        "Veículo × Linha (1 dia)", 
+        "Motoristas × Linhas (1 dia)",
+        "Motoristas × Veículos (1 dia)",
+        "Rotatividade (Período)",
+        "Horas por Motorista × Dia (Período)"
+    ])
+    with tab1:
+        show_resumo_geral_periodo(df_candidate)
+    with tab2:
+        show_linha_do_tempo_alocacao_1dia(df_candidate)
+    with tab3:
+        show_linha_do_tempo_motoristas_linhas_1dia(df_candidate)
+    with tab4:
+        show_linha_do_tempo_motoristas_veiculos_1dia(df_candidate)
+    with tab5:
+        show_rotatividade_motoristas_veiculos(df_candidate)
+    with tab6:
+        show_tabela_horas_motoristas_periodo(df_candidate)
