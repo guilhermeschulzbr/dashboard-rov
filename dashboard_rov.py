@@ -2738,6 +2738,9 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
         st.info("Os filtros atuais não retornaram segmentos.")
         return
 
+    # Flag ZeroPass (somente não-ocioso)
+    import pandas as _pd
+    segf["ZeroPass"] = (segf["Linha"].astype(str) != "Ocioso") & (_pd.to_numeric(segf["Passageiros"], errors="coerce").fillna(-1) == 0)
     # === Indicadores (Motoristas × Linhas) ===
     segf = segf.copy()
     segf["_dur_min"] = (segf["Fim"] - segf["Início"]).dt.total_seconds()/60.0
@@ -2891,6 +2894,9 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
         st.info("Os filtros atuais não retornaram segmentos.")
         return
 
+    # Flag ZeroPass (somente não-ocioso)
+    import pandas as _pd
+    segf["ZeroPass"] = (segf["Veículo"].astype(str) != "Ocioso") & (_pd.to_numeric(segf["Passageiros"], errors="coerce").fillna(-1) == 0)
     # === Indicadores (Motoristas × Veículos) ===
     segf = segf.copy()
     segf["_dur_min"] = (segf["Fim"] - segf["Início"]).dt.total_seconds()/60.0
