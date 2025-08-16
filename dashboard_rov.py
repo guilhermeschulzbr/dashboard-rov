@@ -2279,764 +2279,191 @@ except Exception as _e:
         pass
 
 
-
-
-# === Painel Rotatividade Motoristas x Veículos (injetado) ===
-VEIC_CANDIDATES = [
-    "Numero Veiculo"
-]
-MOT_CANDIDATES = [
-    "Cobrador/Operador"
-]
-DT_CANDIDATES = [
-    "Data Hora Inicio Operacao"
-]
-
-def _find_col(df, candidates):
-    lower_map = {str(c).lower(): c for c in df.columns}
-    for cand in candidates:
-        if cand in df.columns:
-            return cand
-    for cand in candidates:
-        for col_lower, original in lower_map.items():
-            if str(cand).lower() == col_lower:
-                return original
-    return None
-
-def _kpi_value(v) -> str:
-    try:
-        return f"{int(v):,}".replace(",", ".")
-    except Exception:
-        try:
-            return f"{float(v):,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        except Exception:
-            return str(v)
-
-def _default_index(cols, keywords):
-    cols = list(cols)
-    for i, c in enumerate(cols):
-        name = str(c).lower()
-        if any(k in name for k in keywords):
-            return i
-    return 0 if cols else 0
-
-def show_rotatividade_motoristas_por_veiculo(
-    df,
-    veic_col=None,
-    mot_col=None,
-    dt_col=None,
-    titulo="Rotatividade de Motoristas por Veículo"
-):
-    if df is None or df.empty:
-        st.info("Sem dados no período selecionado.")
-        return
-
-    # 1) Tentativa de auto-detecção
-    vcol = veic_col or _find_col(df, VEIC_CANDIDATES)
-    mcol = mot_col or _find_col(df, MOT_CANDIDATES)
-    dcol = dt_col or _find_col(df, DT_CANDIDATES)
-
-    # 2) Se não encontrar, permitir seleção manual via UI (sem travar a execução)
-    if vcol is None or mcol is None:
-        st.warning("Não foi possível identificar as colunas de **veículo** e/ou **motorista**. Selecione abaixo.")
-        with st.expander("Selecionar colunas manualmente", expanded=True):
-            cols = list(df.columns)
-            v_idx = _default_index(cols, ["veic","veículo","veiculo","carro","prefixo","placa","bus","ônibus","onibus"])
-            m_idx = _default_index(cols, ["motor","operador","cobrador","matric","cpf"])
-            vcol = st.selectbox("Coluna de Veículo", cols, index=min(v_idx, len(cols)-1), key="rot_pick_vcol")
-            mcol = st.selectbox("Coluna de Motorista", cols, index=min(m_idx, len(cols)-1), key="rot_pick_mcol")
-            # Data/hora opcional
-            d_idx = _default_index(cols, ["data","hora","timestamp","dt","datetime"])
-            usar_data = st.checkbox("Usar coluna de data/hora (opcional)", value=(d_idx is not None and len(cols)>0), key="rot_use_dt")
-            if usar_data and len(cols)>0:
-                dcol = st.selectbox("Coluna de Data/Hora", cols, index=min(d_idx, len(cols)-1), key="rot_pick_dcol")
-            else:
-                dcol = None
-
-    # Se ainda assim faltou algo essencial, aborta com aviso claro
-    if vcol is None or mcol is None:
-        st.stop()
-
-    work = df[[vcol, mcol]].copy()
-    work[vcol] = work[vcol].astype(str).str.strip()
-    work[mcol] = work[mcol].astype(str).str.strip()
-    work = work[(work[vcol] != "") & (work[mcol] != "")].dropna(subset=[vcol, mcol])
-
-    agg = (
-        work.groupby(vcol, dropna=False)[mcol]
-            .agg(
-                qtd_motoristas="nunique",
-                lista_motoristas=lambda s: sorted(set(s.astype(str)))
-            )
-            .reset_index()
-    )
-    agg["trocas_est"] = (agg["qtd_motoristas"] - 1).clip(lower=0)
-
-    if dcol and dcol in df.columns:
-        tmp = df[[vcol, mcol, dcol]].dropna(subset=[vcol, mcol])
-        tmp = tmp.sort_values(by=[vcol, dcol])
-        last = tmp.groupby(vcol, dropna=False).tail(1).rename(columns={mcol: "ultimo_motorista"})
-        last = last[[vcol, "ultimo_motorista"]]
-        agg = agg.merge(last, on=vcol, how="left")
-    else:
-        agg["ultimo_motorista"] = None
-
-    total_veiculos = len(agg)
-    media_motoristas = agg["qtd_motoristas"].mean() if total_veiculos else 0
-    apenas_um = int((agg["qtd_motoristas"] == 1).sum())
-    dois_ou_mais = int((agg["qtd_motoristas"] >= 2).sum())
-    if not agg.empty:
-        top_row = agg.sort_values("qtd_motoristas", ascending=False).iloc[0]
-        veic_top = str(top_row[vcol])
-        top_qtd = int(top_row["qtd_motoristas"])
-    else:
-        veic_top, top_qtd = "-", 0
-
-    st.markdown("## 🔄 Rotatividade Motoristas x Veículos")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Veículos com dados", _kpi_value(total_veiculos))
-    c2.metric("Média de motoristas/veículo", f"{media_motoristas:.2f}".replace(".", ","))
-    c3.metric("Veículos (1 motorista)", _kpi_value(apenas_um))
-    c4.metric("Veículos (2+ motoristas)", _kpi_value(dois_ou_mais))
-    c5.metric("Maior rotatividade", f"{_kpi_value(top_qtd)} (veíc. {veic_top})")
-
-    st.markdown("—")
-    colA, colB, colC = st.columns([1,1,2])
-    min_qtd = colA.number_input("Filtrar por quantidade mínima de motoristas", min_value=1, value=1, step=1, key="rot_min_qtd")
-    top_n   = colB.number_input("Top N veículos (0 = todos)", min_value=0, value=0, step=5, key="rot_top_n")
-    ordenar = colC.selectbox("Ordenar por", ["qtd_motoristas (desc)", "qtd_motoristas (asc)", vcol], key="rot_ordenar")
-
-    data = agg.copy()
-    data = data[data["qtd_motoristas"] >= min_qtd]
-    if ordenar == "qtd_motoristas (asc)":
-        data = data.sort_values("qtd_motoristas", ascending=True)
-    elif ordenar == vcol:
-        data = data.sort_values(vcol, ascending=True)
-    else:
-        data = data.sort_values("qtd_motoristas", ascending=False)
-
-    if top_n and top_n > 0:
-        data_plot = data.head(int(top_n))
-    else:
-        data_plot = data
-
-    if not data_plot.empty:
-        # Garantir eixo Veículo como descrição
-        data_plot[vcol] = data_plot[vcol].astype(str)
-
-        fig = px.bar(
-            data_plot,
-            x=vcol,
-            y="qtd_motoristas",
-            title="Quantidade de motoristas únicos por veículo (período selecionado)",
-            text="qtd_motoristas",
-        )
-        fig.update_xaxes(type='category')
-        fig.update_traces(textposition="outside", cliponaxis=False)
-        fig.update_layout(xaxis_title="Veículo", yaxis_title="Qtde de motoristas", bargap=0.2, height=450)
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Nenhum veículo atende ao filtro atual.")
-
-    st.markdown("#### Detalhamento")
-    table = data.copy().rename(columns={
-        vcol: "Veículo",
-        "qtd_motoristas": "Qtde de motoristas",
-        "trocas_est": "Trocas (estimadas)",
-        "ultimo_motorista": "Último motorista"
-    })
-    table["Motoristas (lista)"] = table["lista_motoristas"].apply(lambda xs: ", ".join(map(str, xs))[:2000])
-    table = table.drop(columns=["lista_motoristas"], errors="ignore")
-    st.dataframe(table, use_container_width=True, hide_index=True)
-
-    csv = table.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("Baixar CSV (rotatividade por veículo)", data=csv, file_name="rotatividade_motoristas_por_veiculo.csv", mime="text/csv")
-# === Fim painel rotatividade ===
-
-
-
-
-# === Chamada do painel de Rotatividade (injetado) ===
-try:
-    _df_candidates = [
-        'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado'
-    ]
-    df_rot = None
-    for _name in _df_candidates:
-        if _name in globals():
-            _obj = globals()[_name]
-            try:
-                import pandas as _pd
-                if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
-                    df_rot = _obj
-                    break
-            except Exception:
-                pass
-    if df_rot is None and 'df' in globals():
-        df_rot = df
-
-    if df_rot is not None:
-        show_rotatividade_motoristas_por_veiculo(df_rot)
-    else:
-        st.info("Não foi possível encontrar o DataFrame filtrado. Ajuste o nome da variável ao chamar o painel.")
-except Exception as e:
-    st.warning(f"Falha ao renderizar painel de rotatividade: {e}")
-# === Fim chamada painel rotatividade ===
-
-
-# === Painel: Linha do tempo de alocação (1 dia) — COM INDICADORES ===
-def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocação (1 dia)"):
+# === Painel: Tabela de horas por Motorista × Dia (com HE e negativas) ===
+def show_tabela_horas_motoristas_periodo(df, titulo="🗓️ Tabela de horas por Motorista × Dia (período)"):
     import pandas as pd
-    import plotly.express as px
+    import numpy as np
     from datetime import date as _date
 
+    # Colunas fixas
     vcol = "Numero Veiculo"
     lcol = "Nome Linha"
     scol = "Data Hora Inicio Operacao"
     ecol = "Data Hora Final Operacao"
-
-    missing = [c for c in [vcol, lcol, scol, ecol] if c not in df.columns]
-    if missing:
-        st.error("Colunas ausentes para o painel de alocação (1 dia): " + ", ".join(missing))
-        return
-
-    CAND_PASS_TOTAL = ["Passageiros","Qtd Passageiros","Qtde Passageiros","Quantidade Passageiros","Total Passageiros","Passageiros Transportados","Qtd de Passageiros","Quantidade de Passageiros"]
-    CAND_PAGANTES   = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte","Pagantes","Quantidade Pagantes","Qtd Pagantes","Qtde Pagantes","Validações","Validacoes","Validacao","Validação","Embarques","Embarcados"]
-    CAND_GRAT       = ["Quant Gratuidade","Qtd Gratuidade","Qtde Gratuidade","Gratuidades","Gratuidade","Quantidade Gratuidade"]
-
-    def _num_from_row(row, cols):
-        total = 0.0
-        for c in cols:
-            if c in row.index:
-                try:
-                    v = pd.to_numeric(row[c], errors="coerce")
-                    if pd.notna(v):
-                        total += float(v)
-                except Exception:
-                    pass
-        return float(total)
-
-    def _passageiros_row(row):
-        for c in CAND_PASS_TOTAL:
-            if c in row.index:
-                v = pd.to_numeric(row[c], errors="coerce")
-                return 0.0 if pd.isna(v) else float(v)
-        pag = _num_from_row(row, CAND_PAGANTES)
-        grat = _num_from_row(row, CAND_GRAT)
-        return float(pag + grat)
-
-    st.markdown("## " + titulo)
-
-    df = df.copy()
-    df[scol] = pd.to_datetime(df[scol], errors="coerce")
-    df[ecol] = pd.to_datetime(df[ecol], errors="coerce")
-
-    sdates = df[scol].dropna().dt.date
-    edates = df[ecol].dropna().dt.date
-    day_default = sdates.min() if not sdates.empty else (edates.min() if not edates.empty else _date.today())
-
-    dia = st.date_input("Dia para análise (apenas 1 dia)", value=day_default, format="DD/MM/YYYY", key="aloc_dia")
-
-    day_start = pd.Timestamp(dia).replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end   = day_start + pd.Timedelta(days=1)
-
-    pass_cols = [c for c in (CAND_PASS_TOTAL + CAND_PAGANTES + CAND_GRAT) if c in df.columns]
-    tmp = df[[vcol, lcol, scol, ecol] + pass_cols].dropna(subset=[scol, ecol, vcol]).copy()
-
-    segs = []
-    for _, r in tmp.iterrows():
-        s = r[scol]; e = r[ecol]
-        if pd.isna(s) or pd.isna(e) or e <= day_start or s >= day_end:
-            continue
-        s_clip = max(s, day_start)
-        e_clip = min(e, day_end)
-        if s_clip >= e_clip:
-            continue
-        pax = _passageiros_row(r)
-        segs.append({"Veículo": str(r[vcol]), "Linha": str(r[lcol]), "Início": s_clip, "Fim": e_clip, "Passageiros": pax})
-
-    seg = pd.DataFrame(segs)
-    if seg.empty:
-        st.info("Sem segmentos para o dia selecionado.")
-        return
-
-    seg = seg.sort_values(["Veículo", "Início", "Fim"])
-    ociosos = []
-    for veic, g in seg.groupby("Veículo", sort=False):
-        cur = day_start
-        for _, rr in g.iterrows():
-            if rr["Início"] > cur:
-                ociosos.append({"Veículo": veic, "Linha": "Ocioso", "Início": cur, "Fim": rr["Início"], "Passageiros": 0.0})
-            cur = max(cur, rr["Fim"])
-        if cur < day_end:
-            ociosos.append({"Veículo": veic, "Linha": "Ocioso", "Início": cur, "Fim": day_end, "Passageiros": 0.0})
-    if ociosos:
-        seg = pd.concat([seg, pd.DataFrame(ociosos)], ignore_index=True).sort_values(["Veículo","Início"])
-
-    seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
-
-    with st.expander("Filtros de exibição"):
-        seg["Veículo"] = seg["Veículo"].astype(str)
-        veics = sorted(seg["Veículo"].unique().tolist())
-        linhas = sorted(seg["Linha"].astype(str).unique().tolist())
-        pick_veics = st.multiselect("Filtrar Veículos", veics, default=veics, key="aloc_filt_veic")
-        pick_linhas = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=linhas, key="aloc_filt_lin")
-        segf = seg[(seg["Veículo"].isin(pick_veics)) & (seg["Linha"].astype(str).isin(pick_linhas))]
-    if segf.empty:
-        st.info("Os filtros atuais não retornaram segmentos.")
-        return
-    # === Indicadores (Veículo × Linha) ===
-    segf = segf.copy()
-    segf["_dur_min"] = (segf["Fim"] - segf["Início"]).dt.total_seconds()/60.0
-    work_mask = segf["Linha"].astype(str) != "Ocioso"
-    t_work = float(segf.loc[work_mask, "_dur_min"].sum())
-    t_idle = float(segf.loc[~work_mask, "_dur_min"].sum())
-    t_tot = t_work + t_idle
-    pax_tot = float(pd.to_numeric(segf.loc[work_mask, "Passageiros"], errors="coerce").fillna(0).sum())
-    pph = (pax_tot / (t_work/60.0)) if t_work > 0 else 0.0
-
-    def _fmt_hhmm(m):
-        try:
-            m = int(round(float(m)))
-        except Exception:
-            m = 0
-        return f"{m//60:02d}:{m%60:02d}"
-
-    def _fmt_pct(x):
-        try:
-            return f"{(float(x)*100):.1f}%"
-        except Exception:
-            return "0.0%"
-
-    c1,c2,c3,c4,c5 = st.columns(5)
-    c1.metric("Veículos (selecionados)", f"{segf['Veículo'].nunique()}")
-    c2.metric("Tempo Operacional", _fmt_hhmm(t_work))
-    c3.metric("Tempo Ocioso", _fmt_hhmm(t_idle))
-    c4.metric("% Ocioso", _fmt_pct(t_idle / t_tot) if t_tot>0 else "0.0%")
-    c5.metric("Passageiros / Hora", f"{pph:.1f}")
-    st.divider()
-
-    fig = px.timeline(
-        segf,
-        x_start="Início",
-        x_end="Fim",
-        y="Veículo",
-        color="Linha",
-        pattern_shape="ZeroPass" if "ZeroPass" in segf.columns else None,
-        pattern_shape_map={True: "x", False: ""} if "ZeroPass" in segf.columns else None,
-        hover_data={"Duração (min)":":.1f","Passageiros":True,"Veículo":True,"Linha":True,"Início":True,"Fim":True},
-    )
-    fig.update_yaxes(autorange="reversed", type="category")
-    fig.update_layout(height=650, xaxis_title="Horário", yaxis_title="Veículo")
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("#### Segmentos gerados")
-    st.dataframe(segf, use_container_width=True, hide_index=True)
-    csv = segf.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("Baixar CSV da linha do tempo (1 dia)", data=csv, file_name="alocacao_veiculos_1dia.csv", mime="text/csv")
-# === Fim Painel: Linha do tempo de alocação (1 dia) — COM INDICADORES ===
-
-
-
-# === Painel: Linha do tempo — Motoristas × Linhas (1 dia) — COM INDICADORES ===
-def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: Motoristas × Linhas (1 dia)"):
-    import pandas as pd
-    import plotly.express as px
-    from datetime import date as _date
-
-    vcol = "Numero Veiculo"
-    lcol = "Nome Linha"
-    scol = "Data Hora Inicio Operacao"
-    ecol = "Data Hora Final Operacao"
+    # Detectar coluna de motorista
     M_CANDS = ["Motorista","Operador","Cobrador/Operador","MOTORISTA","Matricula","Matrícula","CPF Motorista","ID Motorista","Nome Motorista","Nome do Motorista"]
     mcol = next((c for c in M_CANDS if c in df.columns), None)
 
     missing = [c for c in [mcol, lcol, scol, ecol] if c is None or c not in df.columns]
     if missing:
-        st.error("Colunas ausentes para o painel Motoristas × Linhas: " + ", ".join(map(str, missing)))
+        st.error("Colunas ausentes para a tabela de horas: " + ", ".join(map(str, missing)))
         return
-
-    CAND_PASS_TOTAL = ["Passageiros","Qtd Passageiros","Qtde Passageiros","Quantidade Passageiros","Total Passageiros","Passageiros Transportados","Qtd de Passageiros","Quantidade de Passageiros"]
-    CAND_PAGANTES   = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte","Pagantes","Quantidade Pagantes","Qtd Pagantes","Qtde Pagantes","Validações","Validacoes","Validacao","Validação","Embarques","Embarcados"]
-    CAND_GRAT       = ["Quant Gratuidade","Qtd Gratuidade","Qtde Gratuidade","Gratuidades","Gratuidade","Quantidade Gratuidade"]
-
-    def _num_from_row(row, cols):
-        total = 0.0
-        for c in cols:
-            if c in row.index:
-                try:
-                    v = pd.to_numeric(row[c], errors="coerce")
-                    if pd.notna(v):
-                        total += float(v)
-                except Exception:
-                    pass
-        return float(total)
-
-    def _passageiros_row(row):
-        for c in CAND_PASS_TOTAL:
-            if c in row.index:
-                v = pd.to_numeric(row[c], errors="coerce")
-                return 0.0 if pd.isna(v) else float(v)
-        pag = _num_from_row(row, CAND_PAGANTES)
-        grat = _num_from_row(row, CAND_GRAT)
-        return float(pag + grat)
 
     st.markdown("## " + titulo)
 
-    df = df.copy()
-    df[scol] = pd.to_datetime(df[scol], errors="coerce")
-    df[ecol] = pd.to_datetime(df[ecol], errors="coerce")
+    # Preparar datas
+    base = df.copy()
+    base[scol] = pd.to_datetime(base[scol], errors="coerce")
+    base[ecol] = pd.to_datetime(base[ecol], errors="coerce")
 
-    sdates = df[scol].dropna().dt.date
-    edates = df[ecol].dropna().dt.date
-    day_default = sdates.min() if not sdates.empty else (edates.min() if not edates.empty else _date.today())
+    # Range padrão (período completo do dataset)
+    sdates = base[scol].dropna().dt.date
+    edates = base[ecol].dropna().dt.date
+    if not sdates.empty:
+        start_default = sdates.min()
+    elif not edates.empty:
+        start_default = edates.min()
+    else:
+        start_default = _date.today()
+    if not edates.empty:
+        end_default = edates.max()
+    elif not sdates.empty:
+        end_default = sdates.max()
+    else:
+        end_default = _date.today()
 
-    dia = st.date_input("Dia (1 dia) — Motoristas × Linhas", value=day_default, format="DD/MM/YYYY", key="mot_lin_dia")
+    col1, col2 = st.columns(2)
+    with col1:
+        d_ini = st.date_input("Início do período", value=start_default, format="DD/MM/YYYY", key="horas_tbl_dtini")
+    with col2:
+        d_fim = st.date_input("Fim do período", value=end_default, format="DD/MM/YYYY", key="horas_tbl_dtfim")
+    if d_fim < d_ini:
+        st.warning("A data final é anterior à inicial.")
+        return
 
-    day_start = pd.Timestamp(dia).replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end   = day_start + pd.Timedelta(days=1)
+    dt_ini = pd.Timestamp(d_ini).normalize()
+    dt_fim = pd.Timestamp(d_fim).normalize() + pd.Timedelta(days=1)  # exclusivo
 
-    pass_cols = [c for c in (CAND_PASS_TOTAL + CAND_PAGANTES + CAND_GRAT) if c in df.columns]
-    tmp = df[[mcol, lcol, scol, ecol] + pass_cols].dropna(subset=[mcol, scol, ecol]).copy()
+    # Filtros adicionais
+    with st.expander("Filtros (opcionais)"):
+        mot_list = sorted(base[mcol].astype(str).dropna().unique().tolist())
+        pick_mot = st.multiselect("Filtrar Motoristas", mot_list, default=mot_list, key="horas_tbl_filt_mot")
+        linhas = sorted(base[lcol].astype(str).dropna().unique().tolist())
+        pick_lin = st.multiselect("Filtrar Linhas", linhas, default=linhas, key="horas_tbl_filt_lin")
+        veics = sorted(base[vcol].astype(str).dropna().unique().tolist()) if vcol in base.columns else []
+        if veics:
+            pick_vei = st.multiselect("Filtrar Veículos", veics, default=veics, key="horas_tbl_filt_vei")
+        else:
+            pick_vei = []
 
+    # Seleção dentro do período e filtros
+    mask = (
+        base[scol].notna() & base[ecol].notna() &
+        (base[ecol] > dt_ini) & (base[scol] < dt_fim) &
+        (base[mcol].astype(str).isin(pick_mot)) &
+        (base[lcol].astype(str).isin(pick_lin))
+    )
+    if veics:
+        mask &= base[vcol].astype(str).isin(pick_vei)
+    base = base.loc[mask, [mcol, lcol, scol, ecol]].copy()
+    if base.empty:
+        st.info("Sem registros no período/filtros selecionados.")
+        return
+
+    # Construir segmentos (clipping ao período) e ratear por dia
     segs = []
-    for _, r in tmp.iterrows():
+    for _, r in base.iterrows():
         s = r[scol]; e = r[ecol]
-        if pd.isna(s) or pd.isna(e) or e <= day_start or s >= day_end:
+        if pd.isna(s) or pd.isna(e): 
             continue
-        s_clip = max(s, day_start)
-        e_clip = min(e, day_end)
-        if s_clip >= e_clip:
+        s = max(s, dt_ini)
+        e = min(e, dt_fim)
+        if s >= e:
             continue
-        pax = _passageiros_row(r)
-        segs.append({"Motorista": str(r[mcol]), "Linha": str(r[lcol]), "Início": s_clip, "Fim": e_clip, "Passageiros": pax})
+        # ignorar ocioso: usamos apenas as linhas operando (quando existe info de linha)
+        # (se a origem já tiver "Ocioso" como Nome Linha, mantemos filtro anterior que excluiu)
+        cur = s
+        while cur < e:
+            next_boundary = (cur.normalize() + pd.Timedelta(days=1))
+            e_part = min(e, next_boundary)
+            dur_min = (e_part - cur).total_seconds()/60.0
+            segs.append({
+                "Motorista": str(r[mcol]),
+                "Dia": cur.normalize().date(),
+                "Minutos": dur_min
+            })
+            cur = e_part
+
+    if not segs:
+        st.info("Sem segmentos no período recortado.")
+        return
 
     seg = pd.DataFrame(segs)
-    if seg.empty:
-        st.info("Sem segmentos para o dia selecionado.")
-        return
+    # Agregar minutos por motorista x dia
+    piv = seg.pivot_table(index="Motorista", columns="Dia", values="Minutos", aggfunc="sum", fill_value=0, observed=False)
 
-    seg = seg.sort_values(["Motorista", "Início", "Fim"])
-    ociosos = []
-    for mot, g in seg.groupby("Motorista", sort=False):
-        cur = day_start
-        for _, rr in g.iterrows():
-            if rr["Início"] > cur:
-                ociosos.append({"Motorista": mot, "Linha": "Ocioso", "Início": cur, "Fim": rr["Início"], "Passageiros": 0.0})
-            cur = max(cur, rr["Fim"])
-        if cur < day_end:
-            ociosos.append({"Motorista": mot, "Linha": "Ocioso", "Início": cur, "Fim": day_end, "Passageiros": 0.0})
-    if ociosos:
-        seg = pd.concat([seg, pd.DataFrame(ociosos)], ignore_index=True).sort_values(["Motorista","Início"])
+    # Totais
+    limite = 7*60 + 20  # 440
+    total_min = piv.sum(axis=1)
+    he_min = (piv - limite).clip(lower=0).sum(axis=1)
+    neg_min = (limite - piv).clip(lower=0).sum(axis=1)
 
-    seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
+    # Ordenar colunas por data
+    piv = piv.reindex(sorted(piv.columns), axis=1)
 
-    
-    # === Totais por motorista e rótulos com HE ===
-    def _fmt_hhmm(total_min):
+    # Formatação
+    def _fmt_hhmm(mins):
         try:
-            total_min = int(round(float(total_min)))
+            mins = int(round(float(mins)))
         except Exception:
-            total_min = 0
-        h = total_min // 60
-        m = total_min % 60
-        return f"{h:02d}:{m:02d}"
+            mins = 0
+        return f"{mins//60:02d}:{mins%60:02d}"
 
-    _mask_work = seg["Linha"].astype(str) != "Ocioso"
-    # usa a duração já calculada, zerando quando ocioso
-    _work_min = seg["Duração (min)"].where(_mask_work, 0.0)
-    _totais = seg.assign(__work_min=_work_min).groupby("Motorista", observed=False)["__work_min"].sum(min_count=1).fillna(0.0)
+    # Montar dataframe final com totais (mantendo números para estilo)
+    final_num = piv.copy()
+    final_num["Total (min)"] = total_min
+    final_num["HE Total (min)"] = he_min
+    final_num["Horas Negativas (min)"] = neg_min
 
-    _limite_min = 7*60 + 20  # 07:20
-    mot_label_map = {}
-    
-    for _mot, _mins in _totais.items():
-        _extra = max(0, _mins - _limite_min)
-        if _extra > 0:
-            mot_label_map[_mot] = f"⚡ <b>{_mot} — {_fmt_hhmm(_mins)} (HE {_fmt_hhmm(_extra)})</b>"
-        else:
-            mot_label_map[_mot] = f"{_mot} — {_fmt_hhmm(_mins)}"
-    with st.expander("Filtros — Motoristas × Linhas"):
-        mot_list = sorted(seg["Motorista"].astype(str).unique().tolist())
-        linhas = sorted(seg["Linha"].astype(str).unique().tolist())
-        pick_mot = st.multiselect("Filtrar Motoristas", mot_list, default=mot_list, key="ml_filt_mot")
-        pick_lin = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=linhas, key="ml_filt_lin")
-        segf = seg[(seg["Motorista"].isin(pick_mot)) & (seg["Linha"].astype(str).isin(pick_lin))]
-    if segf.empty:
-        st.info("Os filtros atuais não retornaram segmentos.")
-        return
+    # Styler: cores por célula nos dias
+    day_cols = list(piv.columns)
+    def color_cells(v):
+        # v: uma série com valores numéricos de uma linha
+        colors = []
+        for x in v:
+            if x > limite:
+                colors.append("background-color: #ff6b6b; color: #000")  # vermelho
+            elif x < 6*60:
+                colors.append("background-color: #ffe082; color: #000")  # amarelo
+            else:
+                colors.append("background-color: #81c784; color: #000")  # verde
+        return colors
 
-    # Flag ZeroPass (somente não-ocioso)
-    import pandas as _pd
-    segf["ZeroPass"] = (segf["Linha"].astype(str) != "Ocioso") & (_pd.to_numeric(segf["Passageiros"], errors="coerce").fillna(-1) == 0)
-    # === Indicadores (Motoristas × Linhas) ===
-    segf = segf.copy()
-    segf["_dur_min"] = (segf["Fim"] - segf["Início"]).dt.total_seconds()/60.0
-    work_mask = segf["Linha"].astype(str) != "Ocioso"
-    t_work = float(segf.loc[work_mask, "_dur_min"].sum())
-    pax_tot = float(pd.to_numeric(segf.loc[work_mask, "Passageiros"], errors="coerce").fillna(0).sum())
-    mot_count = int(segf["Motorista"].nunique())
-    work_per_mot = segf.loc[work_mask].groupby("Motorista", observed=False)["_dur_min"].sum() if mot_count>0 else None
-    he_total = float((work_per_mot - (7*60 + 20)).clip(lower=0).sum()) if work_per_mot is not None else 0.0
-    avg_work_min = (t_work / mot_count) if mot_count>0 else 0.0
-    pph = (pax_tot / (t_work/60.0)) if t_work > 0 else 0.0
+    sty = final_num.style
+    # aplicar cores só nas colunas de dias
+    sty = sty.apply(color_cells, subset=day_cols, axis=1)
+    # formatar HH:MM nas colunas de dias e totais
+    fmt_cols = day_cols + ["Total (min)", "HE Total (min)", "Horas Negativas (min)"]
+    sty = sty.format(_fmt_hhmm, subset=fmt_cols)
 
-    def _fmt_hhmm(m):
-        try:
-            m = int(round(float(m)))
-        except Exception:
-            m = 0
-        return f"{m//60:02d}:{m%60:02d}"
+    # Renomear cabeçalhos de dia para dd/mm
+    rename_cols = {c: pd.Timestamp(c).strftime("%d/%m") for c in day_cols}
+    sty = sty.relabel_index(lambda x: x, axis=0).relabel_index(lambda c: rename_cols.get(c, c), axis=1)
 
-    c1,c2,c3,c4,c5 = st.columns(5)
-    c1.metric("Motoristas (selecionados)", f"{mot_count}")
-    c2.metric("Horas trabalhadas (total)", _fmt_hhmm(t_work))
-    c3.metric("Hora extra (total)", _fmt_hhmm(he_total))
-    c4.metric("Média h/ motorista", _fmt_hhmm(avg_work_min))
-    c5.metric("Passageiros / Hora", f"{pph:.1f}")
-    st.divider()
+    st.markdown("#### Tabela de horas (cores: vermelho >07:20, amarelo <06:00, verde entre 06:00–07:20)")
+    st.write(sty)
 
-    # Label opcional já existente em versões anteriores permanece válido
-    # Rótulo do eixo Y com horas e HE
-    segf['Motorista_Label'] = segf['Motorista'].map(mot_label_map).fillna(segf['Motorista'].astype(str))
-
-
-    fig = px.timeline(
-        segf,
-        x_start="Início",
-        x_end="Fim",
-        y='Motorista_Label',
-        color="Linha",
-        pattern_shape="ZeroPass" if "ZeroPass" in segf.columns else None,
-        pattern_shape_map={True: "x", False: ""} if "ZeroPass" in segf.columns else None,
-        hover_data={"Duração (min)":":.1f","Passageiros":True,"ZeroPass":True,"Motorista":True,"Linha":True,"Início":True,"Fim":True},
-    )
-    fig.update_yaxes(autorange="reversed", type="category")
-    fig.update_layout(height=650, xaxis_title="Horário", yaxis_title="Motorista")
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("#### Segmentos — Motoristas × Linhas")
-    st.dataframe(segf, use_container_width=True, hide_index=True)
-    csv = segf.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("Baixar CSV (motoristas × linhas - 1 dia)", data=csv, file_name="motoristas_x_linhas_1dia.csv", mime="text/csv")
-# === Fim Painel: Motoristas × Linhas (1 dia) — COM INDICADORES ===
+    # Download CSV (com HH:MM)
+    csv_df = piv.copy()
+    csv_df["Total"] = total_min.map(_fmt_hhmm)
+    csv_df["HE Total"] = he_min.map(_fmt_hhmm)
+    csv_df["Horas Negativas"] = neg_min.map(_fmt_hhmm)
+    # reformat day col names
+    csv_df.columns = [rename_cols.get(c, c) for c in csv_df.columns]
+    csv = csv_df.applymap(_fmt_hhmm).to_csv(index=True, encoding="utf-8-sig")
+    st.download_button("Baixar CSV (horas por motorista × dia)", data=csv, file_name="horas_motoristas_por_dia.csv", mime="text/csv")
+# === Fim Painel: Tabela de horas por Motorista × Dia ===
 
 
 
-# === Painel: Linha do tempo — Motoristas × Veículos (1 dia) — COM INDICADORES ===
-def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo: Motoristas × Veículos (1 dia)"):
-    import pandas as pd
-    import plotly.express as px
-    from datetime import date as _date
-
-    vcol = "Numero Veiculo"
-    scol = "Data Hora Inicio Operacao"
-    ecol = "Data Hora Final Operacao"
-    M_CANDS = ["Motorista","Operador","Cobrador/Operador","MOTORISTA","Matricula","Matrícula","CPF Motorista","ID Motorista","Nome Motorista","Nome do Motorista"]
-    mcol = next((c for c in M_CANDS if c in df.columns), None)
-
-    missing = [c for c in [mcol, vcol, scol, ecol] if c is None or c not in df.columns]
-    if missing:
-        st.error("Colunas ausentes para o painel Motoristas × Veículos: " + ", ".join(map(str, missing)))
-        return
-
-    CAND_PASS_TOTAL = ["Passageiros","Qtd Passageiros","Qtde Passageiros","Quantidade Passageiros","Total Passageiros","Passageiros Transportados","Qtd de Passageiros","Quantidade de Passageiros"]
-    CAND_PAGANTES   = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte","Pagantes","Quantidade Pagantes","Qtd Pagantes","Qtde Pagantes","Validações","Validacoes","Validacao","Validação","Embarques","Embarcados"]
-    CAND_GRAT       = ["Quant Gratuidade","Qtd Gratuidade","Qtde Gratuidade","Gratuidades","Gratuidade","Quantidade Gratuidade"]
-
-    def _num_from_row(row, cols):
-        total = 0.0
-        for c in cols:
-            if c in row.index:
-                try:
-                    v = pd.to_numeric(row[c], errors="coerce")
-                    if pd.notna(v):
-                        total += float(v)
-                except Exception:
-                    pass
-        return float(total)
-
-    def _passageiros_row(row):
-        for c in CAND_PASS_TOTAL:
-            if c in row.index:
-                v = pd.to_numeric(row[c], errors="coerce")
-                return 0.0 if pd.isna(v) else float(v)
-        pag = _num_from_row(row, CAND_PAGANTES)
-        grat = _num_from_row(row, CAND_GRAT)
-        return float(pag + grat)
-
-    st.markdown("## " + titulo)
-
-    df = df.copy()
-    df[scol] = pd.to_datetime(df[scol], errors="coerce")
-    df[ecol] = pd.to_datetime(df[ecol], errors="coerce")
-
-    sdates = df[scol].dropna().dt.date
-    edates = df[ecol].dropna().dt.date
-    day_default = sdates.min() if not sdates.empty else (edates.min() if not edates.empty else _date.today())
-
-    dia = st.date_input("Dia (1 dia) — Motoristas × Veículos", value=day_default, format="DD/MM/YYYY", key="mot_vei_dia")
-
-    day_start = pd.Timestamp(dia).replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end   = day_start + pd.Timedelta(days=1)
-
-    pass_cols = [c for c in (CAND_PASS_TOTAL + CAND_PAGANTES + CAND_GRAT) if c in df.columns]
-    tmp = df[[mcol, vcol, scol, ecol] + pass_cols].dropna(subset=[mcol, vcol, scol, ecol]).copy()
-
-    segs = []
-    for _, r in tmp.iterrows():
-        s = r[scol]; e = r[ecol]
-        if pd.isna(s) or pd.isna(e) or e <= day_start or s >= day_end:
-            continue
-        s_clip = max(s, day_start)
-        e_clip = min(e, day_end)
-        if s_clip >= e_clip:
-            continue
-        pax = _passageiros_row(r)
-        segs.append({"Motorista": str(r[mcol]), "Veículo": str(r[vcol]), "Início": s_clip, "Fim": e_clip, "Passageiros": pax})
-
-    seg = pd.DataFrame(segs)
-    if seg.empty:
-        st.info("Sem segmentos para o dia selecionado.")
-        return
-
-    seg = seg.sort_values(["Motorista", "Início", "Fim"])
-    ociosos = []
-    for mot, g in seg.groupby("Motorista", sort=False):
-        cur = day_start
-        for _, rr in g.iterrows():
-            if rr["Início"] > cur:
-                ociosos.append({"Motorista": mot, "Veículo": "Ocioso", "Início": cur, "Fim": rr["Início"], "Passageiros": 0.0})
-            cur = max(cur, rr["Fim"])
-        if cur < day_end:
-            ociosos.append({"Motorista": mot, "Veículo": "Ocioso", "Início": cur, "Fim": day_end, "Passageiros": 0.0})
-    if ociosos:
-        seg = pd.concat([seg, pd.DataFrame(ociosos)], ignore_index=True).sort_values(["Motorista","Início"])
-
-    seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
-
-    
-    # === Totais por motorista e rótulos com HE ===
-    def _fmt_hhmm(total_min):
-        try:
-            total_min = int(round(float(total_min)))
-        except Exception:
-            total_min = 0
-        h = total_min // 60
-        m = total_min % 60
-        return f"{h:02d}:{m:02d}"
-
-    _mask_work = seg["Veículo"].astype(str) != "Ocioso"
-    # usa a duração já calculada, zerando quando ocioso
-    _work_min = seg["Duração (min)"].where(_mask_work, 0.0)
-    _totais = seg.assign(__work_min=_work_min).groupby("Motorista", observed=False)["__work_min"].sum(min_count=1).fillna(0.0)
-
-    _limite_min = 7*60 + 20  # 07:20
-    mot_label_map = {}
-    
-    for _mot, _mins in _totais.items():
-        _extra = max(0, _mins - _limite_min)
-        if _extra > 0:
-            mot_label_map[_mot] = f"⚡ <b>{_mot} — {_fmt_hhmm(_mins)} (HE {_fmt_hhmm(_extra)})</b>"
-        else:
-            mot_label_map[_mot] = f"{_mot} — {_fmt_hhmm(_mins)}"
-    with st.expander("Filtros — Motoristas × Veículos"):
-        mot_list = sorted(seg["Motorista"].astype(str).unique().tolist())
-        veics = sorted(seg["Veículo"].astype(str).unique().tolist())
-        pick_mot = st.multiselect("Filtrar Motoristas", mot_list, default=mot_list, key="mv_filt_mot")
-        pick_vei = st.multiselect("Filtrar Veículos (inclui 'Ocioso')", veics, default=veics, key="mv_filt_vei")
-        segf = seg[(seg["Motorista"].isin(pick_mot)) & (seg["Veículo"].astype(str).isin(pick_vei))]
-    if segf.empty:
-        st.info("Os filtros atuais não retornaram segmentos.")
-        return
-
-    # Flag ZeroPass (somente não-ocioso)
-    import pandas as _pd
-    segf["ZeroPass"] = (segf["Veículo"].astype(str) != "Ocioso") & (_pd.to_numeric(segf["Passageiros"], errors="coerce").fillna(-1) == 0)
-    # === Indicadores (Motoristas × Veículos) ===
-    segf = segf.copy()
-    segf["_dur_min"] = (segf["Fim"] - segf["Início"]).dt.total_seconds()/60.0
-    work_mask = segf["Veículo"].astype(str) != "Ocioso"
-    t_work = float(segf.loc[work_mask, "_dur_min"].sum())
-    pax_tot = float(pd.to_numeric(segf.loc[work_mask, "Passageiros"], errors="coerce").fillna(0).sum())
-    mot_count = int(segf["Motorista"].nunique())
-    work_per_mot = segf.loc[work_mask].groupby("Motorista", observed=False)["_dur_min"].sum() if mot_count>0 else None
-    he_total = float((work_per_mot - (7*60 + 20)).clip(lower=0).sum()) if work_per_mot is not None else 0.0
-    avg_work_min = (t_work / mot_count) if mot_count>0 else 0.0
-    pph = (pax_tot / (t_work/60.0)) if t_work > 0 else 0.0
-
-    def _fmt_hhmm(m):
-        try:
-            m = int(round(float(m)))
-        except Exception:
-            m = 0
-        return f"{m//60:02d}:{m%60:02d}"
-
-    c1,c2,c3,c4,c5 = st.columns(5)
-    c1.metric("Motoristas (selecionados)", f"{mot_count}")
-    c2.metric("Horas trabalhadas (total)", _fmt_hhmm(t_work))
-    c3.metric("Hora extra (total)", _fmt_hhmm(he_total))
-    c4.metric("Média h/ motorista", _fmt_hhmm(avg_work_min))
-    c5.metric("Passageiros / Hora", f"{pph:.1f}")
-    st.divider()
-    # Rótulo do eixo Y com horas e HE
-    segf['Motorista_Label'] = segf['Motorista'].map(mot_label_map).fillna(segf['Motorista'].astype(str))
-
-
-    fig = px.timeline(
-        segf,
-        x_start="Início",
-        x_end="Fim",
-        y='Motorista_Label',
-        color="Veículo",
-        pattern_shape="ZeroPass" if "ZeroPass" in segf.columns else None,
-        pattern_shape_map={True: "x", False: ""} if "ZeroPass" in segf.columns else None,
-        hover_data={"Duração (min)":":.1f","Passageiros":True,"ZeroPass":True,"Motorista":True,"Veículo":True,"Início":True,"Fim":True},
-    )
-    fig.update_yaxes(autorange="reversed", type="category")
-    fig.update_layout(height=650, xaxis_title="Horário", yaxis_title="Motorista")
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("#### Segmentos — Motoristas × Veículos")
-    st.dataframe(segf, use_container_width=True, hide_index=True)
-    csv = segf.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("Baixar CSV (motoristas × veículos - 1 dia)", data=csv, file_name="motoristas_x_veiculos_1dia.csv", mime="text/csv")
-# === Fim Painel: Motoristas × Veículos (1 dia) — COM INDICADORES ===
-
-
-
-# === Chamada: Linha do tempo de alocação (1 dia) ===
+# === Chamada: Tabela de horas por Motorista × Dia ===
 try:
-    if 'show_linha_do_tempo_alocacao_1dia' in globals():
-        _df_candidates = [
-            'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df'
-        ]
-        _required = ['Numero Veiculo','Nome Linha','Data Hora Inicio Operacao','Data Hora Final Operacao']
-        df_candidate = None
-        for _name in _df_candidates:
-            if _name in globals():
-                _obj = globals()[_name]
-                try:
-                    import pandas as _pd
-                    if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
-                        if set(_required).issubset(set(_obj.columns)):
-                            df_candidate = _obj
-                            break
-                except Exception:
-                    pass
-        if df_candidate is not None:
-            show_linha_do_tempo_alocacao_1dia(df_candidate)
-except Exception as e:
-    st.warning(f"Falha ao renderizar painel de alocação (1 dia): {e}")
-# === Fim chamada: Linha do tempo de alocação (1 dia) ===
-
-# === Chamada: Timeline Motoristas × Linhas (1 dia) ===
-try:
-    if 'show_linha_do_tempo_motoristas_linhas_1dia' in globals():
+    if 'show_tabela_horas_motoristas_periodo' in globals():
         _df_candidates = [
             'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df'
         ]
         _required = ['Nome Linha','Data Hora Inicio Operacao','Data Hora Final Operacao']
+        # Motorista é autodetectado dentro da função
         df_candidate = None
         for _name in _df_candidates:
             if _name in globals():
@@ -3050,33 +2477,8 @@ try:
                 except Exception:
                     pass
         if df_candidate is not None:
-            show_linha_do_tempo_motoristas_linhas_1dia(df_candidate)
+            show_tabela_horas_motoristas_periodo(df_candidate)
 except Exception as e:
-    st.warning(f"Falha ao renderizar painel Motoristas × Linhas: {e}")
-# === Fim chamada: Timeline Motoristas × Linhas (1 dia) ===
-
-# === Chamada: Timeline Motoristas × Veículos (1 dia) ===
-try:
-    if 'show_linha_do_tempo_motoristas_veiculos_1dia' in globals():
-        _df_candidates = [
-            'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df'
-        ]
-        _required = ['Numero Veiculo','Data Hora Inicio Operacao','Data Hora Final Operacao']
-        df_candidate = None
-        for _name in _df_candidates:
-            if _name in globals():
-                _obj = globals()[_name]
-                try:
-                    import pandas as _pd
-                    if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
-                        if set(_required).issubset(set(_obj.columns)):
-                            df_candidate = _obj
-                            break
-                except Exception:
-                    pass
-        if df_candidate is not None:
-            show_linha_do_tempo_motoristas_veiculos_1dia(df_candidate)
-except Exception as e:
-    st.warning(f"Falha ao renderizar painel Motoristas × Veículos: {e}")
-# === Fim chamada: Timeline Motoristas × Veículos (1 dia) ===
+    st.warning(f"Falha ao renderizar Tabela de horas por Motorista × Dia: {e}")
+# === Fim chamada: Tabela de horas por Motorista × Dia ===
 
