@@ -2581,9 +2581,6 @@ def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocaç
     if segf.empty:
         st.info("Os filtros atuais não retornaram segmentos.")
         return
-
-    segf['Motorista_Label'] = segf['Motorista'].map(mot_label_map).fillna(segf['Motorista'].astype(str))
-    segf['Motorista_Label'] = segf['Motorista'].map(mot_label_map).fillna(segf['Motorista'].astype(str))
     # === Indicadores (Veículo × Linha) ===
     segf = segf.copy()
     segf["_dur_min"] = (segf["Fim"] - segf["Início"]).dt.total_seconds()/60.0
