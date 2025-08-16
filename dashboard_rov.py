@@ -2511,6 +2511,21 @@ except Exception as e:
 # === Painel: Linha do tempo de alocação (Veículo × Linha, 1 dia) ===
 def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocação (1 dia)"):
     import pandas as pd, plotly.express as px
+
+    # --- Dados + CSV (Veículo × Linha, 1 dia) ---
+    try:
+        st.markdown("#### Dados — Veículo × Linha (1 dia)")
+        st.dataframe(segf, use_container_width=True, hide_index=True)
+        _fname = "alocacao_veiculos_linhas_1dia.csv"
+        try:
+            _fname = f"alocacao_veiculos_linhas_{pd.to_datetime(dia).strftime('%Y%m%d')}.csv"
+        except Exception:
+            pass
+        _csv = segf.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("Baixar CSV – Veículo × Linha (1 dia)", data=_csv, file_name=_fname, mime="text/csv", key="dl_aloc_base")
+    except Exception as _e:
+        st.caption(f"Não foi possível montar a seção de dados: {_e}")
+
     from datetime import date as _date
     vcol, lcol = "Numero Veiculo", "Nome Linha"
     scol, ecol = "Data Hora Inicio Operacao", "Data Hora Final Operacao"
@@ -2613,6 +2628,21 @@ def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocaç
 # === Painel: Linha do tempo — Motoristas × Linhas (1 dia) ===
 def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: Motoristas × Linhas (1 dia)"):
     import pandas as pd, plotly.express as px
+
+    # --- Dados + CSV (Motoristas × Linhas, 1 dia) ---
+    try:
+        st.markdown("#### Dados — Motoristas × Linhas (1 dia)")
+        st.dataframe(segf, use_container_width=True, hide_index=True)
+        _fname = "motoristas_x_linhas_1dia.csv"
+        try:
+            _fname = f"motoristas_x_linhas_{pd.to_datetime(dia).strftime('%Y%m%d')}.csv"
+        except Exception:
+            pass
+        _csv = segf.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("Baixar CSV – Motoristas × Linhas (1 dia)", data=_csv, file_name=_fname, mime="text/csv", key="dl_motlin_1d")
+    except Exception as _e:
+        st.caption(f"Não foi possível montar a seção de dados: {_e}")
+
     from datetime import date as _date
     import streamlit as st
     lcol="Nome Linha"; scol="Data Hora Inicio Operacao"; ecol="Data Hora Final Operacao"
@@ -2714,6 +2744,21 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
 # === Painel: Linha do tempo — Motoristas × Veículos (1 dia) ===
 def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo: Motoristas × Veículos (1 dia)"):
     import pandas as pd, plotly.express as px
+
+    # --- Dados + CSV (Motoristas × Veículos, 1 dia) ---
+    try:
+        st.markdown("#### Dados — Motoristas × Veículos (1 dia)")
+        st.dataframe(segf, use_container_width=True, hide_index=True)
+        _fname = "motoristas_x_veiculos_1dia.csv"
+        try:
+            _fname = f"motoristas_x_veiculos_{pd.to_datetime(dia).strftime('%Y%m%d')}.csv"
+        except Exception:
+            pass
+        _csv = segf.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("Baixar CSV – Motoristas × Veículos (1 dia)", data=_csv, file_name=_fname, mime="text/csv", key="dl_motvei_1d")
+    except Exception as _e:
+        st.caption(f"Não foi possível montar a seção de dados: {_e}")
+
     from datetime import date as _date
     import streamlit as st
     vcol="Numero Veiculo"; scol="Data Hora Inicio Operacao"; ecol="Data Hora Final Operacao"
@@ -2816,6 +2861,16 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
 # === Painel: Rotatividade Motoristas × Veículos (período) ===
 def show_rotatividade_motoristas_veiculos(df, titulo="🔁 Rotatividade Motoristas × Veículos (período selecionado)"):
     import pandas as pd, plotly.express as px, streamlit as st
+
+    # --- Dados + CSV (Rotatividade) ---
+    try:
+        st.markdown("#### Dados — Rotatividade (motoristas únicos por veículo)")
+        st.dataframe(grp, use_container_width=True, hide_index=True)
+        _csv = grp.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("Baixar CSV – Rotatividade", data=_csv, file_name="rotatividade_motoristas_por_veiculo.csv", mime="text/csv", key="dl_rot_veic")
+    except Exception as _e:
+        st.caption(f"Não foi possível montar a seção de dados: {_e}")
+
     vcol="Numero Veiculo"
     # Detectar coluna de motorista
     M_CANDS=["Motorista","Operador","Cobrador/Operador","MOTORISTA","Matricula","Matrícula","CPF Motorista","ID Motorista","Nome Motorista","Nome do Motorista"]
