@@ -1091,7 +1091,7 @@ if ai_anom:
     else:
         # Montagem de features
         base = df_filtered.copy()
-                base['_TotPass'] = _compute_total_passageiros(base)
+        base['_TotPass'] = _compute_total_passageiros(base)
         # Coluna de distância
         dist_col_x = "Distancia_cfg_km" if ("Distancia_cfg_km" in base.columns and base["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in base.columns else None)
         # Duração
@@ -1552,7 +1552,7 @@ with col_b:
 st.subheader("📘 Tabela consolidada por linha")
 
 if "Nome Linha" in df_filtered.columns:
-    dist_col_tbl = "Distancia_cfg_km" if ("Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in df_filtered.columns else None)
+    dist_col_tbl = "Distancia_cfg_km" if "Distancia_cfg_km" in df_filtered.columns else ("Distancia" if "Distancia" in df_filtered.columns else None)
     base_tbl = df_filtered.copy()
     base_tbl['_TotPass'] = _compute_total_passageiros(base_tbl)
     if dist_col_tbl is None:
@@ -1560,12 +1560,12 @@ if "Nome Linha" in df_filtered.columns:
         dist_col_tbl = "__dist__"
     grp = base_tbl.groupby("Nome Linha", observed=False)
 
-    veic_cfg_med_tbl  = grp["Veiculos_cfg"].mean(numeric_only=True) if "Veiculos_cfg" in base_tbl.columns else pd.Series(0.0, index=grp.size()
-    veic_ids_uni_tbl  = grp["Numero Veiculo"].nunique() if "Numero Veiculo" in base_tbl.columns else pd.Series(0, index=grp.size()
+    veic_cfg_med_tbl  = grp["Veiculos_cfg"].mean(numeric_only=True) if "Veiculos_cfg" in base_tbl.columns else pd.Series(0.0, index=grp.size())
+    veic_ids_uni_tbl  = grp["Numero Veiculo"].nunique() if "Numero Veiculo" in base_tbl.columns else pd.Series(0, index=grp.size())
     km_rodado_tbl     = grp[dist_col_tbl].sum(numeric_only=True)
     pax_total_tbl     = grp["_TotPass"].sum(numeric_only=True)
     viagens_total_tbl = grp.size()
-    grat_tbl          = grp["Quant Gratuidade"].sum(numeric_only=True) if "Quant Gratuidade" in base_tbl.columns else pd.Series(0.0, index=grp.size()
+    grat_tbl          = grp["Quant Gratuidade"].sum(numeric_only=True) if "Quant Gratuidade" in base_tbl.columns else pd.Series(0.0, index=grp.size())
 
     # Colunas de pagantes (inclui integrações) + fallback por regex
     paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
@@ -1584,7 +1584,7 @@ if "Nome Linha" in df_filtered.columns:
         pag_by_cols_tbl = grp[candidate_cols].sum(numeric_only=True)
         pagantes_tbl = pag_by_cols_tbl.sum(axis=1)
     else:
-        pagantes_tbl = pd.Series(0.0, index=grp.size()
+        pagantes_tbl = pd.Series(0.0, index=grp.size())
     receita_tar_l_tbl = pagantes_tbl * float(tarifa_usuario)
     subsidio_l_tbl    = pagantes_tbl * float(subsidio_pagante)
     receita_tot_l_tbl = receita_tar_l_tbl + subsidio_l_tbl
@@ -1746,7 +1746,7 @@ if ai_cluster:
             st.info("É necessário ter 'Nome Linha' para clusterização.")
         else:
             # Distância a usar
-            dcol = "Distancia_cfg_km" if ("Distancia_cfg_km" in base.columns and base["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in base.columns else None)
+            dcol = "Distancia_cfg_km" if "Distancia_cfg_km" in base.columns else ("Distancia" if "Distancia" in base.columns else None)
             if dcol is None:
                 base["__km__"] = np.nan
                 dcol = "__km__"
@@ -1755,7 +1755,7 @@ if ai_cluster:
             total_pax = grp["_TotPass"].sum(numeric_only=True)
             total_km  = grp[dcol].sum(numeric_only=True)
             viagens   = grp.size()
-            grat      = grp["Quant Gratuidade"].sum(numeric_only=True) if "Quant Gratuidade" in base.columns else pd.Series(0, index=grp.size()
+            grat      = grp["Quant Gratuidade"].sum(numeric_only=True) if "Quant Gratuidade" in base.columns else pd.Series(0.0, index=grp.size())
 
             paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
             present_paying_c = [c for c in paying_cols_all if c in base.columns]
@@ -1764,7 +1764,7 @@ if ai_cluster:
                 pag = pag_df.sum(axis=1)
             else:
                 pag = pd.Series(0.0, index=grp.size()
-
+)
             receita = pag * (float(tarifa_usuario) + float(subsidio_pagante))
 
             # Features
