@@ -2698,6 +2698,8 @@ def show_linha_do_tempo_alocacao_1dia(
         st.info("Os filtros atuais não retornaram segmentos.")
         return
 
+    segf["Motorista_Label"] = segf["Motorista"].map(mot_label_map).fillna(segf["Motorista"])
+    segf["Motorista_Label"] = segf["Motorista"].map(mot_label_map).fillna(segf["Motorista"])
     # Flag de zero passageiros (apenas não-ocioso)
     import pandas as _pd  # local alias only for to_numeric
     segf["ZeroPass"] = (segf["Linha"].astype(str) != "Ocioso") & (_pd.to_numeric(segf["Passageiros"], errors="coerce").fillna(-1) == 0)
@@ -2858,6 +2860,30 @@ def show_linha_do_tempo_motoristas_linhas_1dia(
 
     seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
 
+    
+    # === Totais de horas por motorista (excluindo 'Linha' == "Ocioso") ===
+    def _fmt_hhmm(total_min):
+        try:
+            total_min = int(round(float(total_min)))
+        except Exception:
+            total_min = 0
+        h = total_min // 60
+        m = total_min % 60
+        return f"{h:02d}:{m:02d}"
+
+    _mask_trabalho = seg["Linha"].astype(str) != "Ocioso"
+    _seg_work = seg.copy()
+    _seg_work["__work_min"] = ((_seg_work["Fim"] - _seg_work["Início"]).dt.total_seconds()/60.0).where(_mask_trabalho, 0.0)
+    _totais = _seg_work.groupby("Motorista", observed=False)["__work_min"].sum(min_count=1).fillna(0.0)
+
+    _limite_min = 7*60 + 20  # 07:20 => 440 min
+    mot_label_map = {}
+    for _mot, _mins in _totais.items():
+        _extra = max(0, _mins - _limite_min)
+        if _extra > 0:
+            mot_label_map[_mot] = f"{_mot} — {_fmt_hhmm(_mins)} (HE {_fmt_hhmm(_extra)})"
+        else:
+            mot_label_map[_mot] = f"{_mot} — {_fmt_hhmm(_mins)}"
     # filtros
     with st.expander("Filtros — Motoristas x Linhas"):
         mot_list = sorted(seg["Motorista"].astype(str).unique().tolist())
@@ -2869,6 +2895,8 @@ def show_linha_do_tempo_motoristas_linhas_1dia(
         st.info("Os filtros atuais não retornaram segmentos.")
         return
 
+    segf["Motorista_Label"] = segf["Motorista"].map(mot_label_map).fillna(segf["Motorista"])
+    segf["Motorista_Label"] = segf["Motorista"].map(mot_label_map).fillna(segf["Motorista"])
     segf = segf.copy()
     segf["ZeroPass"] = (segf["Linha"].astype(str) != "Ocioso") & (pd.to_numeric(segf["Passageiros"], errors="coerce").fillna(-1) == 0)
 
@@ -2876,7 +2904,7 @@ def show_linha_do_tempo_motoristas_linhas_1dia(
         segf,
         x_start="Início",
         x_end="Fim",
-        y="Motorista",
+        y="Motorista_Label",
         color="Linha",
         pattern_shape="ZeroPass",
         pattern_shape_map={True: "x", False: ""},
@@ -2988,6 +3016,30 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(
 
     seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
 
+    
+    # === Totais de horas por motorista (excluindo 'Veículo' == "Ocioso") ===
+    def _fmt_hhmm(total_min):
+        try:
+            total_min = int(round(float(total_min)))
+        except Exception:
+            total_min = 0
+        h = total_min // 60
+        m = total_min % 60
+        return f"{h:02d}:{m:02d}"
+
+    _mask_trabalho = seg["Veículo"].astype(str) != "Ocioso"
+    _seg_work = seg.copy()
+    _seg_work["__work_min"] = ((_seg_work["Fim"] - _seg_work["Início"]).dt.total_seconds()/60.0).where(_mask_trabalho, 0.0)
+    _totais = _seg_work.groupby("Motorista", observed=False)["__work_min"].sum(min_count=1).fillna(0.0)
+
+    _limite_min = 7*60 + 20  # 07:20 => 440 min
+    mot_label_map = {}
+    for _mot, _mins in _totais.items():
+        _extra = max(0, _mins - _limite_min)
+        if _extra > 0:
+            mot_label_map[_mot] = f"{_mot} — {_fmt_hhmm(_mins)} (HE {_fmt_hhmm(_extra)})"
+        else:
+            mot_label_map[_mot] = f"{_mot} — {_fmt_hhmm(_mins)}"
     with st.expander("Filtros — Motoristas x Veículos"):
         mot_list = sorted(seg["Motorista"].astype(str).unique().tolist())
         veics = sorted(seg["Veículo"].astype(str).unique().tolist())
@@ -2998,6 +3050,8 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(
         st.info("Os filtros atuais não retornaram segmentos.")
         return
 
+    segf["Motorista_Label"] = segf["Motorista"].map(mot_label_map).fillna(segf["Motorista"])
+    segf["Motorista_Label"] = segf["Motorista"].map(mot_label_map).fillna(segf["Motorista"])
     segf = segf.copy()
     segf["ZeroPass"] = (segf["Veículo"].astype(str) != "Ocioso") & (pd.to_numeric(segf["Passageiros"], errors="coerce").fillna(-1) == 0)
     segf["Veículo"] = segf["Veículo"].astype(str)
@@ -3006,7 +3060,7 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(
         segf,
         x_start="Início",
         x_end="Fim",
-        y="Motorista",
+        y="Motorista_Label",
         color="Veículo",
         pattern_shape="ZeroPass",
         pattern_shape_map={True: "x", False: ""},
