@@ -2730,27 +2730,28 @@ def show_linha_do_tempo_alocacao_1dia(
 
 
 # === Chamada: Linha do tempo de alocação (1 dia) ===
-# (guarded para evitar NameError se a função ainda não estiver carregada)
 try:
     if 'show_linha_do_tempo_alocacao_1dia' in globals():
         _df_candidates = [
             'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df'
         ]
-        df_aloc = None
+        _required = ['Numero Veiculo','Nome Linha','Data Hora Inicio Operacao','Data Hora Final Operacao']
+        df_candidate = None
         for _name in _df_candidates:
             if _name in globals():
                 _obj = globals()[_name]
                 try:
                     import pandas as _pd
                     if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
-                        df_aloc = _obj
-                        break
+                        if set(_required).issubset(set(_obj.columns)):
+                            df_candidate = _obj
+                            break
                 except Exception:
                     pass
-        if df_aloc is not None:
-            show_linha_do_tempo_alocacao_1dia(df_aloc)
+        if df_candidate is not None:
+            show_linha_do_tempo_alocacao_1dia(df_candidate)
         else:
-            st.info("Não foi possível localizar o DataFrame base para o painel de alocação (1 dia).")
+            st.info("Não foi possível localizar um DataFrame com as colunas necessárias: " + ", ".join(_required))
     else:
         st.info("Painel de alocação (1 dia) carregado, mas a função ainda não foi definida nesta execução.")
 except Exception as e:
@@ -3084,19 +3085,23 @@ try:
         _df_candidates = [
             'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df'
         ]
-        df_base_mot = None
+        _required = ['Nome Linha','Data Hora Inicio Operacao','Data Hora Final Operacao']
+        df_candidate = None
         for _name in _df_candidates:
             if _name in globals():
                 _obj = globals()[_name]
                 try:
                     import pandas as _pd
                     if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
-                        df_base_mot = _obj
-                        break
+                        if set(_required).issubset(set(_obj.columns)):
+                            df_candidate = _obj
+                            break
                 except Exception:
                     pass
-        if df_base_mot is not None:
-            show_linha_do_tempo_motoristas_linhas_1dia(df_base_mot)
+        if df_candidate is not None:
+            show_linha_do_tempo_motoristas_linhas_1dia(df_candidate)
+        else:
+            st.info("Não foi possível localizar um DataFrame com as colunas necessárias: " + ", ".join(_required))
 except Exception as e:
     st.warning(f"Falha ao renderizar painel Motoristas x Linhas: {e}")
 # === Fim chamada: Timeline Motoristas x Linhas (1 dia) ===
@@ -3107,19 +3112,23 @@ try:
         _df_candidates = [
             'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df'
         ]
-        df_base_motv = None
+        _required = ['Numero Veiculo','Data Hora Inicio Operacao','Data Hora Final Operacao']
+        df_candidate = None
         for _name in _df_candidates:
             if _name in globals():
                 _obj = globals()[_name]
                 try:
                     import pandas as _pd
                     if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
-                        df_base_motv = _obj
-                        break
+                        if set(_required).issubset(set(_obj.columns)):
+                            df_candidate = _obj
+                            break
                 except Exception:
                     pass
-        if df_base_motv is not None:
-            show_linha_do_tempo_motoristas_veiculos_1dia(df_base_motv)
+        if df_candidate is not None:
+            show_linha_do_tempo_motoristas_veiculos_1dia(df_candidate)
+        else:
+            st.info("Não foi possível localizar um DataFrame com as colunas necessárias: " + ", ".join(_required))
 except Exception as e:
     st.warning(f"Falha ao renderizar painel Motoristas x Veículos: {e}")
 # === Fim chamada: Timeline Motoristas x Veículos (1 dia) ===
