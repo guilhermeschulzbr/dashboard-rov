@@ -5,7 +5,6 @@
 # Requisitos: streamlit, pandas, plotly, numpy, python-dateutil, statsmodels (opcional)
 # ============================================================
 
-import streamlit as st
 import re
 import os
 import json
@@ -3029,3 +3028,4 @@ try:
 except Exception as e:
     st.warning(f"Falha ao renderizar Rotatividade: {e}")
 # === Fim chamada ===
+
