@@ -147,6 +147,8 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
         return
     dfm = dfm[dfm[mot_col].astype(str) == str(motorista_id)]
 
+    dfm['_TotPass'] = _compute_total_passageiros(dfm)
+
     if dfm.empty:
         st.info("Sem dados para o motorista no filtro atual.")
         return
@@ -201,9 +203,7 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
     # Gráficos
     g1, g2 = st.columns(2)
 
-        dfm['_TotPass'] = _compute_total_passageiros(dfm)
 # Série por dia (passageiros)
-    dfm['_TotPass'] = _compute_total_passageiros(dfm)
 
     if "Data" in dfm.columns and dfm["Data"].notna().any():
         serie = dfm.groupby("Data", as_index=False, observed=False)["_TotPass"].sum().sort_values("Data").rename(columns={"_TotPass":"Passageiros"})
@@ -217,8 +217,6 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
         if '_TotPass' not in dfm.columns:
 # Distribuição por linha (passageiros)
     if '_TotPass' not in dfm.columns:
-
-        dfm['_TotPass'] = _compute_total_passageiros(dfm)
 
     if "Nome Linha" in dfm.columns:
         by_line = dfm.groupby("Nome Linha", as_index=False, observed=False)["_TotPass"].sum().rename(columns={"_TotPass":"Passageiros"}).sort_values("Passageiros", ascending=False).head(12)
