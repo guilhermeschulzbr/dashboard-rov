@@ -579,6 +579,56 @@ def show_tabela_horas_motoristas_periodo(df, titulo="🗓️ Tabela de horas por
 # Execução: descobrir DF e renderizar painéis
 # ==============================
 _DF_CANDS = ['df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df']
+
+def _load_df_from_uploader():
+    st.markdown("### Carregar dados")
+    up = st.file_uploader("Envie um arquivo (.csv, .xlsx, .xls, .parquet)", type=["csv","xlsx","xls","parquet"])
+    if not up:
+        return None
+    import pandas as _pd
+    try:
+        if up.name.lower().endswith(".parquet"):
+            df = _pd.read_parquet(up)
+        elif up.name.lower().endswith((".xlsx",".xls")):
+            df = _pd.read_excel(up)  # primeira planilha
+        else:
+            # CSV: tenta utf-8, depois latin-1; tenta detectar separador
+            try:
+                df = _pd.read_csv(up, sep=None, engine="python")
+            except Exception:
+                up.seek(0)
+                try:
+                    df = _pd.read_csv(up, sep=";", engine="python", encoding="utf-8")
+                except Exception:
+                    up.seek(0)
+                    df = _pd.read_csv(up, sep=";", engine="python", encoding="latin-1")
+        if df is not None and not df.empty:
+            st.success(f"Arquivo carregado: {up.name} — {df.shape[0]} linhas, {df.shape[1]} colunas.")
+            return df
+    except Exception as e:
+        st.error(f"Falha ao ler o arquivo: {e}")
+    return None
+
+def _pick_df():
+    import pandas as _pd
+    # 1) Procurar DF por nomes comuns
+    for name in _DF_CANDS:
+        if name in globals():
+            obj = globals()[name]
+            if isinstance(obj, _pd.DataFrame) and not obj.empty:
+                return obj
+    # 2) Procurar qualquer DataFrame nas variáveis globais
+    candidates = [(k,v) for k,v in globals().items() if isinstance(v, _pd.DataFrame) and not v.empty]
+    if candidates:
+        names = [k for k,_ in candidates]
+        pick = st.selectbox("Selecione o DataFrame disponível", names, index=0, key="df_pick_any")
+        return dict(candidates)[pick]
+    # 3) Uploader
+    st.info("Nenhum DataFrame global detectado. Você pode carregar um arquivo abaixo.")
+    df_up = _load_df_from_uploader()
+    if df_up is not None:
+        return df_up
+    return None
 def _pick_df():
     import pandas as _pd
     for name in _DF_CANDS:
