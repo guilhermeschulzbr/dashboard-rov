@@ -12,7 +12,6 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import plotly.express as px
-import streamlit as st
 from datetime import date
 from io import BytesIO
 
@@ -2529,8 +2528,6 @@ def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocaç
     from datetime import date as _date
     vcol, lcol = "Numero Veiculo", "Nome Linha"
     scol, ecol = "Data Hora Inicio Operacao", "Data Hora Final Operacao"
-
-    import streamlit as st
     miss = [c for c in [vcol,lcol,scol,ecol] if c not in df.columns]
     if miss:
         st.error("Colunas ausentes: " + ", ".join(miss)); return
@@ -2644,7 +2641,6 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
         st.caption(f"Não foi possível montar a seção de dados: {_e}")
 
     from datetime import date as _date
-    import streamlit as st
     lcol="Nome Linha"; scol="Data Hora Inicio Operacao"; ecol="Data Hora Final Operacao"
     M_CANDS=["Motorista","Operador","Cobrador/Operador","MOTORISTA","Matricula","Matrícula","CPF Motorista","ID Motorista","Nome Motorista","Nome do Motorista"]
     mcol=next((c for c in M_CANDS if c in df.columns), None)
@@ -2760,7 +2756,6 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
         st.caption(f"Não foi possível montar a seção de dados: {_e}")
 
     from datetime import date as _date
-    import streamlit as st
     vcol="Numero Veiculo"; scol="Data Hora Inicio Operacao"; ecol="Data Hora Final Operacao"
     M_CANDS=["Motorista","Operador","Cobrador/Operador","MOTORISTA","Matricula","Matrícula","CPF Motorista","ID Motorista","Nome Motorista","Nome do Motorista"]
     mcol=next((c for c in M_CANDS if c in df.columns), None)
