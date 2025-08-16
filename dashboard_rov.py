@@ -13,6 +13,20 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+
+# === Helper: total de passageiros (pagantes + gratuidades) ===
+def _compute_total_passageiros(df):
+    import pandas as pd
+    paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
+    present = [c for c in paying_cols_all if c in df.columns]
+    if present:
+        pag = pd.to_numeric(df[present].sum(axis=1, numeric_only=True), errors="coerce").fillna(0.0)
+    else:
+        pag = 0.0 if len(df) == 0 else pd.Series(0.0, index=df.index)
+    grat = pd.to_numeric(df["Quant Gratuidade"], errors="coerce").fillna(0.0) if "Quant Gratuidade" in df.columns else (0.0 if len(df) == 0 else pd.Series(0.0, index=df.index))
+    return (pag + grat).astype(float)
+# === Fim helper ===
+
 from datetime import date, datetime, time, timedelta
 from io import BytesIO
 
@@ -140,7 +154,7 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
 
     # KPIs
     tot_viag = len(dfm)
-    tot_pax  = dfm["Passageiros"].sum() if "Passageiros" in dfm.columns else 0
+    tot_pax  = float(tot_pag + tot_grat)
     tot_km   = dfm[dist_col].sum(min_count=1) if dist_col else 0.0
 
     paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
@@ -185,9 +199,10 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
     # Gráficos
     g1, g2 = st.columns(2)
 
-    # Série por dia (passageiros)
-    if "Data" in dfm.columns and dfm["Data"].notna().any() and "Passageiros" in dfm.columns:
-        serie = dfm.groupby("Data", as_index=False, observed=False)["Passageiros"].sum().sort_values("Data")
+        dfm['_TotPass'] = _compute_total_passageiros(dfm)
+# Série por dia (passageiros)
+    if "Data" in dfm.columns and dfm["Data"].notna().any():
+        serie = dfm.groupby("Data", as_index=False, observed=False)["_TotPass"].sum().sort_values("Data").rename(columns={"_TotPass":"Passageiros"})
         fig = px.line(serie, x="Data", y="Passageiros", markers=True, title="Passageiros por dia (motorista)")
         fig.update_xaxes(tickformat="%d/%m/%Y")
         fig.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=320)
@@ -195,9 +210,11 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
     else:
         g1.info("Sem base de datas para série por dia.")
 
-    # Distribuição por linha (passageiros)
-    if {"Nome Linha","Passageiros"}.issubset(dfm.columns):
-        by_line = dfm.groupby("Nome Linha", as_index=False, observed=False)["Passageiros"].sum().sort_values("Passageiros", ascending=False).head(12)
+        if '_TotPass' not in dfm.columns:
+        dfm['_TotPass'] = _compute_total_passageiros(dfm)
+# Distribuição por linha (passageiros)
+    if "Nome Linha" in dfm.columns:
+        by_line = dfm.groupby("Nome Linha", as_index=False, observed=False)["_TotPass"].sum().rename(columns={"_TotPass":"Passageiros"}).sort_values("Passageiros", ascending=False).head(12)
         fig2 = px.bar(by_line, x="Nome Linha", y="Passageiros", title="Passageiros por linha (motorista)")
         fig2.update_layout(xaxis_tickangle=-30, margin=dict(l=10,r=10,t=35,b=10), height=320)
         g2.plotly_chart(fig2, use_container_width=True)
@@ -1081,6 +1098,7 @@ if ai_anom:
     else:
         # Montagem de features
         base = df_filtered.copy()
+                base['_TotPass'] = _compute_total_passageiros(base)
         # Coluna de distância
         dist_col_x = "Distancia_cfg_km" if ("Distancia_cfg_km" in base.columns and base["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in base.columns else None)
         # Duração
@@ -1544,6 +1562,7 @@ st.subheader("📘 Tabela consolidada por linha")
 if "Nome Linha" in df_filtered.columns:
     dist_col_tbl = "Distancia_cfg_km" if ("Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in df_filtered.columns else None)
     base_tbl = df_filtered.copy()
+    base_tbl['_TotPass'] = _compute_total_passageiros(base_tbl)
     if dist_col_tbl is None:
         base_tbl["__dist__"] = 0.0
         dist_col_tbl = "__dist__"
@@ -1552,7 +1571,7 @@ if "Nome Linha" in df_filtered.columns:
     veic_cfg_med_tbl  = grp["Veiculos_cfg"].mean(numeric_only=True) if "Veiculos_cfg" in base_tbl.columns else pd.Series(0.0, index=grp.size().index)
     veic_ids_uni_tbl  = grp["Numero Veiculo"].nunique() if "Numero Veiculo" in base_tbl.columns else pd.Series(0, index=grp.size().index)
     km_rodado_tbl     = grp[dist_col_tbl].sum(numeric_only=True)
-    pax_total_tbl     = grp["Passageiros"].sum(numeric_only=True) if "Passageiros" in base_tbl.columns else pd.Series(0, index=grp.size().index)
+    pax_total_tbl     = grp["_TotPass"].sum(numeric_only=True).index)
     viagens_total_tbl = grp.size()
     grat_tbl          = grp["Quant Gratuidade"].sum(numeric_only=True) if "Quant Gratuidade" in base_tbl.columns else pd.Series(0.0, index=grp.size().index)
 
@@ -1741,7 +1760,7 @@ if ai_cluster:
                 dcol = "__km__"
             # Totais por linha
             grp = base.groupby("Nome Linha", observed=False)
-            total_pax = grp["Passageiros"].sum(numeric_only=True) if "Passageiros" in base.columns else pd.Series(0, index=grp.size().index)
+            total_pax = grp["_TotPass"].sum(numeric_only=True).index)
             total_km  = grp[dcol].sum(numeric_only=True)
             viagens   = grp.size()
             grat      = grp["Quant Gratuidade"].sum(numeric_only=True) if "Quant Gratuidade" in base.columns else pd.Series(0, index=grp.size().index)
@@ -2598,9 +2617,7 @@ def show_linha_do_tempo_alocacao_1dia(
     from datetime import date as _date
 
     # Colunas fixas conforme solicitado
-    PASS_CANDS = ["Passageiros","Qtd Passageiros","Qtde Passageiros","Quantidade Passageiros","Validações","Validacoes","Validacao","Validação","Embarques","Qtde Embarques","Total Passageiros"]
-    # Procurar coluna de passageiros (opcional)
-    pcol = next((c for c in PASS_CANDS if c in df.columns), None)
+    
     vcol = "Numero Veiculo"
     lcol = "Nome Linha"
     scol = "Data Hora Inicio Operacao"
@@ -2650,7 +2667,11 @@ def show_linha_do_tempo_alocacao_1dia(
         e_clip = min(e, day_end)
         if s_clip >= e_clip:
             continue
-        segs.append({"Veículo": str(r[vcol]), "Linha": str(r[lcol]), "Início": s_clip, "Fim": e_clip, "Passageiros": (r[pcol] if pcol and (pcol in r.index) else None)})
+        segs.append({"Veículo": str(r[vcol]), "Linha": str(r[lcol]), "Início": s_clip, "Fim": e_clip, "Passageiros": float(pd.to_numeric(r.get("Quant Inteiras",0), errors="coerce") or 0)
+                    + float(pd.to_numeric(r.get("Quant Passagem",0), errors="coerce") or 0)
+                    + float(pd.to_numeric(r.get("Quant Passe",0), errors="coerce") or 0)
+                    + float(pd.to_numeric(r.get("Quant Vale Transporte",0), errors="coerce") or 0)
+                    + float(pd.to_numeric(r.get("Quant Gratuidade",0), errors="coerce") or 0)})
 
     seg = pd.DataFrame(segs)
     if seg.empty:
@@ -2674,7 +2695,7 @@ def show_linha_do_tempo_alocacao_1dia(
     seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
     # Flag de viagens com zero passageiros (apenas para segmentos não-ociosos)
     if "Passageiros" in seg.columns:
-        seg["ZeroPass"] = (seg["Linha"].astype(str) != "Ocioso") & (seg["Passageiros"].fillna(-1) == 0)
+        seg["ZeroPass"] = (seg["Linha"].astype(str) != "Ocioso") & (pd.to_numeric(seg["Passageiros"], errors="coerce").fillna(-1) == 0)
     else:
         seg["ZeroPass"] = False
 
