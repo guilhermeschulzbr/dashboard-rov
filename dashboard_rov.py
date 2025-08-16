@@ -5,7 +5,6 @@
 # Requisitos: streamlit, pandas, plotly, numpy, python-dateutil, statsmodels (opcional)
 # ============================================================
 
-import streamlit as st
 import re
 import os
 import json
@@ -2515,13 +2514,16 @@ def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocaç
     # --- Dados + CSV (Veículo × Linha, 1 dia) ---
     try:
         st.markdown("#### Dados — Veículo × Linha (1 dia)")
-        st.dataframe(segf, use_container_width=True, hide_index=True)
+        if "segf" in locals() and hasattr(segf, "empty") and not segf.empty:
+            st.dataframe(segf, use_container_width=True, hide_index=True)
+        else:
+            st.caption("Sem dados para exportar neste momento.")
         _fname = "alocacao_veiculos_linhas_1dia.csv"
         try:
             _fname = f"alocacao_veiculos_linhas_{pd.to_datetime(dia).strftime('%Y%m%d')}.csv"
         except Exception:
             pass
-        _csv = segf.to_csv(index=False).encode("utf-8-sig")
+        _csv = (segf.to_csv(index=False).encode("utf-8-sig") if "segf" in locals() and hasattr(segf, "empty") and not segf.empty else b"")
         st.download_button("Baixar CSV – Veículo × Linha (1 dia)", data=_csv, file_name=_fname, mime="text/csv", key="dl_aloc_base")
     except Exception as _e:
         st.caption(f"Não foi possível montar a seção de dados: {_e}")
@@ -2630,13 +2632,16 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
     # --- Dados + CSV (Motoristas × Linhas, 1 dia) ---
     try:
         st.markdown("#### Dados — Motoristas × Linhas (1 dia)")
-        st.dataframe(segf, use_container_width=True, hide_index=True)
+        if "segf" in locals() and hasattr(segf, "empty") and not segf.empty:
+            st.dataframe(segf, use_container_width=True, hide_index=True)
+        else:
+            st.caption("Sem dados para exportar neste momento.")
         _fname = "motoristas_x_linhas_1dia.csv"
         try:
             _fname = f"motoristas_x_linhas_{pd.to_datetime(dia).strftime('%Y%m%d')}.csv"
         except Exception:
             pass
-        _csv = segf.to_csv(index=False).encode("utf-8-sig")
+        _csv = (segf.to_csv(index=False).encode("utf-8-sig") if "segf" in locals() and hasattr(segf, "empty") and not segf.empty else b"")
         st.download_button("Baixar CSV – Motoristas × Linhas (1 dia)", data=_csv, file_name=_fname, mime="text/csv", key="dl_motlin_1d")
     except Exception as _e:
         st.caption(f"Não foi possível montar a seção de dados: {_e}")
@@ -2745,13 +2750,16 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
     # --- Dados + CSV (Motoristas × Veículos, 1 dia) ---
     try:
         st.markdown("#### Dados — Motoristas × Veículos (1 dia)")
-        st.dataframe(segf, use_container_width=True, hide_index=True)
+        if "segf" in locals() and hasattr(segf, "empty") and not segf.empty:
+            st.dataframe(segf, use_container_width=True, hide_index=True)
+        else:
+            st.caption("Sem dados para exportar neste momento.")
         _fname = "motoristas_x_veiculos_1dia.csv"
         try:
             _fname = f"motoristas_x_veiculos_{pd.to_datetime(dia).strftime('%Y%m%d')}.csv"
         except Exception:
             pass
-        _csv = segf.to_csv(index=False).encode("utf-8-sig")
+        _csv = (segf.to_csv(index=False).encode("utf-8-sig") if "segf" in locals() and hasattr(segf, "empty") and not segf.empty else b"")
         st.download_button("Baixar CSV – Motoristas × Veículos (1 dia)", data=_csv, file_name=_fname, mime="text/csv", key="dl_motvei_1d")
     except Exception as _e:
         st.caption(f"Não foi possível montar a seção de dados: {_e}")
@@ -2861,8 +2869,11 @@ def show_rotatividade_motoristas_veiculos(df, titulo="🔁 Rotatividade Motorist
     # --- Dados + CSV (Rotatividade) ---
     try:
         st.markdown("#### Dados — Rotatividade (motoristas únicos por veículo)")
-        st.dataframe(grp, use_container_width=True, hide_index=True)
-        _csv = grp.to_csv(index=False).encode("utf-8-sig")
+        if "grp" in locals() and hasattr(grp, "empty") and not grp.empty:
+            st.dataframe(grp, use_container_width=True, hide_index=True)
+        else:
+            st.caption("Sem dados para exportar neste momento.")
+        _csv = (grp.to_csv(index=False).encode("utf-8-sig") if "grp" in locals() and hasattr(grp, "empty") and not grp.empty else b"")
         st.download_button("Baixar CSV – Rotatividade", data=_csv, file_name="rotatividade_motoristas_por_veiculo.csv", mime="text/csv", key="dl_rot_veic")
     except Exception as _e:
         st.caption(f"Não foi possível montar a seção de dados: {_e}")
@@ -2875,7 +2886,50 @@ def show_rotatividade_motoristas_veiculos(df, titulo="🔁 Rotatividade Motorist
         st.error("Colunas ausentes para Rotatividade: Numero Veiculo e Motorista"); return
 
     st.markdown("## " + titulo)
-    base=df.copy()
+base = df.copy()
+scol = 'Data Hora Inicio Operacao'
+ecol = 'Data Hora Final Operacao'
+has_dates = (scol in base.columns) and (ecol in base.columns)
+if has_dates:
+    base[scol] = pd.to_datetime(base[scol], errors='coerce')
+    base[ecol] = pd.to_datetime(base[ecol], errors='coerce')
+    _s = base[scol].dropna()
+    _e = base[ecol].dropna()
+    if not _s.empty:
+        start_default = _s.min().date()
+    elif not _e.empty:
+        start_default = _e.min().date()
+    else:
+        from datetime import date as _date
+        start_default = _date.today()
+    if not _e.empty:
+        end_default = _e.max().date()
+    elif not _s.empty:
+        end_default = _s.max().date()
+    else:
+        from datetime import date as _date
+        end_default = _date.today()
+    c1, c2 = st.columns(2)
+    with c1:
+        dt_ini = st.date_input('Início do período (rotatividade)', value=start_default, format='DD/MM/YYYY', key='rot_dtini')
+    with c2:
+        dt_fim = st.date_input('Fim do período (rotatividade)', value=end_default, format='DD/MM/YYYY', key='rot_dtfim')
+    _ini = pd.Timestamp(dt_ini).normalize()
+    _fim = pd.Timestamp(dt_fim).normalize() + pd.Timedelta(days=1)
+    # filtra por sobreposição de intervalo
+    base = base[ base[scol].notna() & base[ecol].notna() & (base[ecol] > _ini) & (base[scol] < _fim) ]
+else:
+    st.caption('Aviso: dataset sem colunas de data/tempo para filtrar período na Rotatividade.')
+
+# Filtros de veículo e motorista
+base[vcol] = base[vcol].astype(str)
+base[mcol] = base[mcol].astype(str)
+pick_veic = st.multiselect('Veículos', sorted(base[vcol].dropna().unique().tolist()), default=None, key='rot_filt_vei')
+pick_mot = st.multiselect('Motoristas', sorted(base[mcol].dropna().unique().tolist()), default=None, key='rot_filt_mot')
+if pick_veic:
+    base = base[ base[vcol].isin(pick_veic) ]
+if pick_mot:
+    base = base[ base[mcol].isin(pick_mot) ]
     # Filtro simples por período, se já existir no app pode ser respeitado externamente; aqui focamos no gráfico
     # Agrupar motoristas únicos por veículo
     grp=(base[[vcol, mcol]].dropna().astype({vcol:str, mcol:str})
@@ -2974,3 +3028,4 @@ try:
 except Exception as e:
     st.warning(f"Falha ao renderizar Rotatividade: {e}")
 # === Fim chamada ===
+
