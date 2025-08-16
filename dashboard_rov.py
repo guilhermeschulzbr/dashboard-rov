@@ -73,12 +73,73 @@ def _pick_df():
         names = [k for k,_ in candidates]
         pick = st.selectbox("Selecione o DataFrame disponível", names, index=0, key="df_pick_any")
         return dict(candidates)[pick]
-    # 3) Uploader
+    # 3) Uploader (mostra apenas aqui; o topo não mostra nova mensagem)
     st.info("Nenhum DataFrame global detectado. Você pode carregar um arquivo abaixo.")
     df_up = _load_df_from_uploader()
-    if df_up is not None:
-        return df_up
-    return None
+    return df_up
+
+# ==============================
+# Filtros Globais (Barra Lateral)
+# ==============================
+def _apply_global_sidebar_filters(df):
+    if df is None or df.empty:
+        return df, {}
+    vcol = "Numero Veiculo"
+    lcol = "Nome Linha"
+    scol = "Data Hora Inicio Operacao"
+    ecol = "Data Hora Final Operacao"
+    mcol = _detect_motorista_col(df)
+
+    base = df.copy()
+    # Datas
+    if scol in base.columns: base[scol] = pd.to_datetime(base[scol], errors="coerce")
+    if ecol in base.columns: base[ecol] = pd.to_datetime(base[ecol], errors="coerce")
+
+    st.sidebar.markdown("### 🔧 Filtros Globais")
+    # Período (se houver datas)
+    if (scol in base.columns) and (ecol in base.columns):
+        sdates = base[scol].dropna().dt.date
+        edates = base[ecol].dropna().dt.date
+        from datetime import date as _date
+        start_default = (sdates.min() if not sdates.empty else (edates.min() if not edates.empty else _date.today()))
+        end_default   = (edates.max() if not edates.empty else (sdates.max() if not sdates.empty else _date.today()))
+        gdt_ini = st.sidebar.date_input("Início do período (global)", value=start_default, format="DD/MM/YYYY", key="g_dtini")
+        gdt_fim = st.sidebar.date_input("Fim do período (global)", value=end_default, format="DD/MM/YYYY", key="g_dtfim")
+    else:
+        gdt_ini = gdt_fim = None
+
+    # Demais filtros
+    pick_vei = pick_lin = pick_mot = None
+    if vcol in base.columns:
+        veics = sorted(base[vcol].astype(str).dropna().unique().tolist())
+        pick_vei = st.sidebar.multiselect("Veículos (global)", veics, default=veics, key="g_vei")
+    if lcol in base.columns:
+        linhas = sorted(base[lcol].astype(str).dropna().unique().tolist())
+        pick_lin = st.sidebar.multiselect("Linhas (global)", linhas, default=linhas, key="g_lin")
+    if mcol and mcol in base.columns:
+        mots = sorted(base[mcol].astype(str).dropna().unique().tolist())
+        pick_mot = st.sidebar.multiselect("Motoristas (global)", mots, default=mots, key="g_mot")
+
+    # Aplicar filtros
+    if gdt_ini and gdt_fim:
+        if gdt_fim < gdt_ini:
+            st.sidebar.warning("A data final é anterior à inicial.")
+        else:
+            _ini = pd.Timestamp(gdt_ini).normalize()
+            _fim = pd.Timestamp(gdt_fim).normalize() + pd.Timedelta(days=1)
+            if (scol in base.columns) and (ecol in base.columns):
+                base = base[ base[scol].notna() & base[ecol].notna() & (base[ecol] > _ini) & (base[scol] < _fim) ]
+
+    if pick_vei is not None:
+        base = base[ base[vcol].astype(str).isin(pick_vei) ]
+    if pick_lin is not None:
+        base = base[ base[lcol].astype(str).isin(pick_lin) ]
+    if pick_mot is not None:
+        base = base[ base[mcol].astype(str).isin(pick_mot) ]
+
+    meta = {"vcol": vcol, "lcol": lcol, "scol": scol, "ecol": ecol, "mcol": mcol,
+            "periodo": (gdt_ini, gdt_fim), "vei": pick_vei, "lin": pick_lin, "mot": pick_mot}
+    return base, meta
 
 # ==============================
 # Painel: Linha do tempo Veículo × Linha (1 dia)
@@ -789,27 +850,48 @@ def show_resumo_geral_periodo(df, titulo="📊 Resumo Geral do Período"):
 # ==============================
 
 df_candidate = _pick_df()
+# Se ainda não há dados, não mostraremos o warning duplicado aqui — o _pick_df já exibiu o uploader.
+if df_candidate is not None and not df_candidate.empty:
+    # Aplica filtros globais (sidebar)
+    df_global, _meta = _apply_global_sidebar_filters(df_candidate)
 
-if df_candidate is None:
-    st.warning("Nenhum DataFrame detectado automaticamente. Carregue os dados ou verifique os nomes das variáveis.")
-else:
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "Resumo (Período)", 
         "Veículo × Linha (1 dia)", 
         "Motoristas × Linhas (1 dia)",
         "Motoristas × Veículos (1 dia)",
         "Rotatividade (Período)",
-        "Horas por Motorista × Dia (Período)"
+        "Horas por Motorista × Dia (Período)",
+        "Painéis Originais"
     ])
     with tab1:
-        show_resumo_geral_periodo(df_candidate)
+        show_resumo_geral_periodo(df_global if df_global is not None else df_candidate)
     with tab2:
-        show_linha_do_tempo_alocacao_1dia(df_candidate)
+        show_linha_do_tempo_alocacao_1dia(df_candidate)  # timelines usam seus próprios controles de dia
     with tab3:
         show_linha_do_tempo_motoristas_linhas_1dia(df_candidate)
     with tab4:
         show_linha_do_tempo_motoristas_veiculos_1dia(df_candidate)
     with tab5:
-        show_rotatividade_motoristas_veiculos(df_candidate)
+        show_rotatividade_motoristas_veiculos(df_global if df_global is not None else df_candidate)
     with tab6:
-        show_tabela_horas_motoristas_periodo(df_candidate)
+        show_tabela_horas_motoristas_periodo(df_global if df_global is not None else df_candidate)
+    with tab7:
+        # Se sua app original expõe alguma função de renderização, chamamos aqui.
+        # Tente alguns nomes comuns; se existir, chamamos. Caso contrário, mostramos uma dica.
+        called = False
+        for fname in ["render_dashboard", "render_main", "show_dashboard", "main", "app", "render"]:
+            if fname in globals() and callable(globals()[fname]):
+                try:
+                    globals()[fname]()  # pode esperar que use 'st' e o df já existente no seu app
+                    called = True
+                    break
+                except Exception as _e:
+                    st.error(f"Falha ao chamar painel original '{fname}': {_e}")
+        if not called:
+            st.info("Não encontrei funções de 'painéis originais' para chamar automaticamente. "
+                    "Se precisar, suba seu arquivo original e eu integro as seções lado a lado.")
+
+else:
+    # Mostra o loader (mensagem e uploader estão dentro do _pick_df)
+    pass
