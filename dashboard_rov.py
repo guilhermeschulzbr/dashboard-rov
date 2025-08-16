@@ -12,6 +12,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 from datetime import date
 from io import BytesIO
@@ -117,7 +118,8 @@ def select_motorista_widget(candidates, key, label="Selecionar motorista"):
     return st.selectbox(label, options=["(selecione)"] + candidates, index=0, key=key)
 
 def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
-    """Mostra uma visão detalhada e visual do motorista selecionado no escopo filtrado atual."""
+    fig = go.Figure()
+"""Mostra uma visão detalhada e visual do motorista selecionado no escopo filtrado atual."""
     if not motorista_id or motorista_id == "(selecione)":
         return
 
@@ -2327,7 +2329,8 @@ def show_rotatividade_motoristas_por_veiculo(
     dt_col=None,
     titulo="Rotatividade de Motoristas por Veículo"
 ):
-    if df is None or df.empty:
+    fig = go.Figure()
+if df is None or df.empty:
         st.info("Sem dados no período selecionado.")
         return
 
