@@ -14,6 +14,8 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+
+
 # === Helper: total de passageiros (pagantes + gratuidades) ===
 def _compute_total_passageiros(df):
     import pandas as pd
@@ -201,6 +203,8 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
 
         dfm['_TotPass'] = _compute_total_passageiros(dfm)
 # Série por dia (passageiros)
+    dfm['_TotPass'] = _compute_total_passageiros(dfm)
+
     if "Data" in dfm.columns and dfm["Data"].notna().any():
         serie = dfm.groupby("Data", as_index=False, observed=False)["_TotPass"].sum().sort_values("Data").rename(columns={"_TotPass":"Passageiros"})
         fig = px.line(serie, x="Data", y="Passageiros", markers=True, title="Passageiros por dia (motorista)")
@@ -211,8 +215,11 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
         g1.info("Sem base de datas para série por dia.")
 
         if '_TotPass' not in dfm.columns:
-        dfm['_TotPass'] = _compute_total_passageiros(dfm)
 # Distribuição por linha (passageiros)
+    if '_TotPass' not in dfm.columns:
+
+        dfm['_TotPass'] = _compute_total_passageiros(dfm)
+
     if "Nome Linha" in dfm.columns:
         by_line = dfm.groupby("Nome Linha", as_index=False, observed=False)["_TotPass"].sum().rename(columns={"_TotPass":"Passageiros"}).sort_values("Passageiros", ascending=False).head(12)
         fig2 = px.bar(by_line, x="Nome Linha", y="Passageiros", title="Passageiros por linha (motorista)")
