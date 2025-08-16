@@ -1,11 +1,5 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-# Dashboard Operacional ROV (aprimorado: suporta CSV ou Excel; autodetecção de separador; cache de carregamento)
-# Execução: streamlit run dashboard_rov_improved.py
-# ============================================================
-
-# -*- coding: utf-8 -*-
-# ============================================================
 # Dashboard Operacional ROV (apenas com dados do arquivo)
 # Execução: streamlit run dashboard_rov.py
 # Requisitos: streamlit, pandas, plotly, numpy, python-dateutil, statsmodels (opcional)
@@ -236,101 +230,31 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
 # Carregamento de dados
 # ------------------------------
 @st.cache_data(show_spinner=False)
+def load_data(csv: object) -> pd.DataFrame:
+    """Carrega o CSV (sep=';'), normaliza tipos e deriva colunas úteis.
 
-@st.cache_data(show_spinner=False)
-def load_data(file_obj: object) -> pd.DataFrame:
-    """Carrega dados a partir de CSV (delimitador auto) ou Excel (.xlsx/.xls).
-    - Detecta automaticamente separador (tentando None, ';', ',', '\t')
-    - Tenta codificações comuns no Brasil (utf-8-sig, utf-8, latin-1)
-    - Mantém o restante do pipeline de limpeza/engenharia existente.
-    Aceita caminho (str) ou objeto retornado por st.file_uploader.
+    Aceita tanto um caminho de arquivo (str) quanto um objeto semelhante a arquivo
+    retornado pelo st.file_uploader. Tenta diferentes codificações para abrir o
+    arquivo e lança um erro se nenhuma delas for válida.
     """
-    import io, csv
-
-    encodings = ["utf-8-sig", "utf-8", "latin-1"]
+    encodings = ["utf-8", "latin-1"]
     last_err = None
     df: Optional[pd.DataFrame] = None
-
-    # Se recebemos um caminho, apenas detecta extensão
-    file_name = None
-    if isinstance(file_obj, str):
-        file_name = file_obj
-        lower = file_name.lower()
-        is_excel = lower.endswith(".xlsx") or lower.endswith(".xls")
-        if is_excel:
-            try:
-                df = pd.read_excel(file_obj)
-            except Exception as e:
-                last_err = e
-        else:
-            # Tentativas para CSV
-            for enc in encodings:
-                for sep in (None, ";", ",", "\t"):
-                    try:
-                        if sep is None:
-                            df = pd.read_csv(file_obj, sep=None, engine="python", encoding=enc)
-                        else:
-                            df = pd.read_csv(file_obj, sep=sep, encoding=enc)
-                        break
-                    except Exception as e:
-                        last_err = e
-                        df = None
-                        continue
-                if df is not None:
-                    break
-    else:
-        # Objeto arquivo do Streamlit: lemos bytes uma única vez
-        raw_bytes = None
+    for enc in encodings:
         try:
-            file_name = getattr(file_obj, "name", None)
-        except Exception:
-            file_name = None
-        try:
-            # tentar .getvalue() (UploadedFile), senão .read()
-            if hasattr(file_obj, "getvalue"):
-                raw_bytes = file_obj.getvalue()
-            else:
-                # reposiciona e lê
+            # Se for um objeto de arquivo, reposiciona o cursor no início antes de ler
+            if hasattr(csv, "read"):
                 try:
-                    file_obj.seek(0)
+                    csv.seek(0)
                 except Exception:
                     pass
-                raw_bytes = file_obj.read()
+                df = pd.read_csv(csv, sep=";", encoding=enc)
+            else:
+                df = pd.read_csv(csv, sep=";", encoding=enc)
+            break
         except Exception as e:
             last_err = e
-            raw_bytes = None
-
-        if raw_bytes is not None:
-            lower = (file_name or "").lower()
-            is_excel = lower.endswith(".xlsx") or lower.endswith(".xls")
-            if is_excel:
-                try:
-                    df = pd.read_excel(io.BytesIO(raw_bytes))
-                except Exception as e:
-                    last_err = e
-            if df is None:
-                # Tentar como CSV em várias codificações/separadores
-                for enc in encodings:
-                    try:
-                        text = raw_bytes.decode(enc, errors="replace")
-                    except Exception:
-                        # Se decode falhar, segue para próxima codificação
-                        continue
-                    for sep in (None, ";", ",", "\t"):
-                        try:
-                            bio = io.StringIO(text)
-                            if sep is None:
-                                df = pd.read_csv(bio, sep=None, engine="python")
-                            else:
-                                df = pd.read_csv(bio, sep=sep)
-                            break
-                        except Exception as e:
-                            last_err = e
-                            df = None
-                            continue
-                    if df is not None:
-                        break
-
+            continue
     if df is None:
         raise RuntimeError(f"Falha ao ler o CSV. Último erro: {last_err}")
 
@@ -593,7 +517,7 @@ def apply_veic_vigente(df_in: pd.DataFrame, store: dict) -> pd.DataFrame:
 # ------------------------------
 st.sidebar.title("⚙️ Configurações")
 # Campo para upload de arquivo CSV pelo usuário
-uploaded_file = st.sidebar.file_uploader("Carregue o arquivo de dados (CSV ou Excel)", type=["csv","xlsx","xls"])
+uploaded_file = st.sidebar.file_uploader("Carregue o arquivo de dados (CSV ';')", type=["csv"])
 if uploaded_file is None:
     st.sidebar.info("Por favor, faça upload do arquivo CSV.")
     st.stop()
@@ -3155,3 +3079,104 @@ try:
 except Exception as e:
     st.warning(f"Falha ao renderizar painel Motoristas × Veículos: {e}")
 # === Fim chamada: Timeline Motoristas × Veículos (1 dia) ===
+
+
+# ===================== RELATÓRIO EXECUTIVO (LOCAL) – INTEGRADO =====================
+# Esta seção adiciona um painel de Relatório Executivo (sem IA) sem alterar seus painéis atuais.
+# Requer: executive_report_local.py no mesmo diretório do app.
+
+try:
+    import streamlit as st
+    import pandas as pd
+    from executive_report_local import ReportParams, generate_report_from_df, export_all
+except Exception as _e:
+    import streamlit as st
+    st.error("Falha ao carregar módulo de relatório local. Certifique-se de que 'executive_report_local.py' está no mesmo diretório.")
+else:
+    with st.expander("📊 Relatório Executivo (Local) – clique para gerar", expanded=False):
+        st.caption("Geração local sem IA: heurísticas estatísticas, KPIs e recomendações.")
+
+        # Descoberta automática de DataFrames globais
+        import inspect, sys
+        def _discover_dfs() -> dict:
+            dfs = {}
+            g = globals()
+            for k, v in list(g.items()):
+                if isinstance(v, pd.DataFrame) and len(v) > 0 and v.shape[1] > 1:
+                    dfs[k] = v
+            # Tenta também módulos importados pelo usuário (painéis que guardam dfs em outros módulos)
+            for mod in list(sys.modules.values()):
+                try:
+                    for k, v in list(vars(mod).items()):
+                        if isinstance(v, pd.DataFrame) and len(v) > 0 and v.shape[1] > 1 and k not in dfs:
+                            dfs[k] = v
+                except Exception:
+                    pass
+            # Ordena pelo número de linhas (maior primeiro)
+            return dict(sorted(dfs.items(), key=lambda kv: len(kv[1]), reverse=True))
+
+        dfs = _discover_dfs()
+        if not dfs:
+            st.info("Nenhum DataFrame relevante foi encontrado automaticamente. "
+                    "Certifique-se de executar os painéis que carregam os dados antes de abrir este bloco.")
+        else:
+            df_names = list(dfs.keys())
+            df_choice = st.selectbox("Selecione o DataFrame base para o relatório", options=df_names, index=0)
+            df_selected = dfs[df_choice]
+
+            date_col_hint = st.text_input("Nome da coluna de data (opcional, inferência automática se vazio)", value="")
+            currency = st.selectbox("Moeda para formatação", options=["R$", "$", "€"], index=0)
+            topk = st.slider("Máx. métricas no relatório", 2, 8, 4)
+
+            colA, colB = st.columns([1,1])
+            with colA:
+                if st.button("Gerar Relatório Executivo (Local)", type="primary", use_container_width=True):
+                    try:
+                        params = ReportParams(
+                            date_col=date_col_hint or None,
+                            top_k_metrics=int(topk),
+                            currency_symbol=currency
+                        )
+                        md, ts_df, order = generate_report_from_df(df_selected, params=params)
+                        st.session_state["exec_report_local_md"] = md
+                        st.session_state["exec_report_local_dfname"] = df_choice
+                        st.success("Relatório gerado com sucesso.")
+                    except Exception as e:
+                        st.error(f"Falha ao gerar o relatório: {e}")
+
+            with colB:
+                if "exec_report_local_md" in st.session_state:
+                    st.download_button("Baixar Markdown",
+                        data=st.session_state["exec_report_local_md"].encode("utf-8"),
+                        file_name="relatorio_executivo_local.md",
+                        mime="text/markdown",
+                        use_container_width=True)
+                else:
+                    st.download_button("Baixar Markdown", data=b"", file_name="relatorio_executivo_local.md",
+                        disabled=True, use_container_width=True)
+
+            if "exec_report_local_md" in st.session_state:
+                st.subheader("Relatório – Pré-visualização")
+                st.markdown(st.session_state["exec_report_local_md"])
+
+                st.divider()
+                st.subheader("Exportar PDF e DOCX")
+                outs = export_all(st.session_state["exec_report_local_md"], "/tmp/relatorio_executivo_local")
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    if "pdf" in outs:
+                        st.download_button("Baixar PDF", data=outs["pdf"],
+                            file_name="relatorio_executivo_local.pdf", mime="application/pdf",
+                            use_container_width=True)
+                    else:
+                        st.info("Para gerar PDF, instale: `pip install reportlab`")
+                with c2:
+                    if "docx" in outs:
+                        st.download_button("Baixar DOCX", data=outs["docx"],
+                            file_name="relatorio_executivo_local.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True)
+                    else:
+                        st.info("Para gerar DOCX, instale: `pip install python-docx`")
+# =================== FIM – RELATÓRIO EXECUTIVO (LOCAL) INTEGRADO ===================
