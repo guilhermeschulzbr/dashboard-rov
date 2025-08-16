@@ -2392,6 +2392,25 @@ def show_tabela_horas_motoristas_periodo(df, titulo="🗓️ Tabela de horas por
     # Agregar minutos por motorista x dia
     piv = seg.pivot_table(index="Motorista", columns="Dia", values="Minutos", aggfunc="sum", fill_value=0, observed=False)
 
+    # Garantir todas as datas do período como colunas (mesmo sem trabalho)
+    all_days = pd.date_range(dt_ini, dt_fim - pd.Timedelta(days=1), freq="D").date
+    piv = piv.reindex(columns=list(all_days), fill_value=0)
+
+    # Contagens de dias e streaks
+    dias_trab = (piv > 0).sum(axis=1).astype(int)
+    dias_nao_trab = (piv == 0).sum(axis=1).astype(int)
+    def _has_streak_gt6(vals):
+        max_run = run = 0
+        for v in (vals > 0).astype(int):
+            if v:
+                run += 1
+                if run > max_run:
+                    max_run = run
+            else:
+                run = 0
+        return max_run > 6  # mais que 6 dias seguidos
+    trabalhou_gt6 = piv.apply(lambda r: _has_streak_gt6(r.values), axis=1)
+
     # Totais
     limite = 7*60 + 20  # 440
     total_min = piv.sum(axis=1)
@@ -2411,6 +2430,9 @@ def show_tabela_horas_motoristas_periodo(df, titulo="🗓️ Tabela de horas por
 
     # Montar dataframe final com totais (mantendo números para estilo)
     final_num = piv.copy()
+    final_num["Dias Trabalhados"] = dias_trab
+    final_num["Dias Não Trabalhados"] = dias_nao_trab
+    final_num["Trabalhou >6 dias seguidos?"] = np.where(trabalhou_gt6, "Sim", "Não")
     final_num["Total (min)"] = total_min
     final_num["HE Total (min)"] = he_min
     final_num["Horas Negativas (min)"] = neg_min
