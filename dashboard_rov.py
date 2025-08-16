@@ -2582,6 +2582,8 @@ def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocaç
         st.info("Os filtros atuais não retornaram segmentos.")
         return
 
+    segf['Motorista_Label'] = segf['Motorista'].map(mot_label_map).fillna(segf['Motorista'].astype(str))
+    segf['Motorista_Label'] = segf['Motorista'].map(mot_label_map).fillna(segf['Motorista'].astype(str))
     # === Indicadores (Veículo × Linha) ===
     segf = segf.copy()
     segf["_dur_min"] = (segf["Fim"] - segf["Início"]).dt.total_seconds()/60.0
@@ -2728,6 +2730,31 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
 
     seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
 
+    
+    # === Totais por motorista e rótulos com HE ===
+    def _fmt_hhmm(total_min):
+        try:
+            total_min = int(round(float(total_min)))
+        except Exception:
+            total_min = 0
+        h = total_min // 60
+        m = total_min % 60
+        return f"{h:02d}:{m:02d}"
+
+    _mask_work = seg["Linha"].astype(str) != "Ocioso"
+    # usa a duração já calculada, zerando quando ocioso
+    _work_min = seg["Duração (min)"].where(_mask_work, 0.0)
+    _totais = seg.assign(__work_min=_work_min).groupby("Motorista", observed=False)["__work_min"].sum(min_count=1).fillna(0.0)
+
+    _limite_min = 7*60 + 20  # 07:20
+    mot_label_map = {}
+    for _mot, _mins in _totais.items():
+        _extra = max(0, _mins - _limite_min)
+        if _extra > 0:
+            # tenta negrito via HTML; se não suportar, ao menos exibe HE
+            mot_label_map[_mot] = f"<b>{_mot} — {_fmt_hhmm(_mins)} (HE {_fmt_hhmm(_extra)})</b>"
+        else:
+            mot_label_map[_mot] = f"{_mot} — {_fmt_hhmm(_mins)}"
     with st.expander("Filtros — Motoristas × Linhas"):
         mot_list = sorted(seg["Motorista"].astype(str).unique().tolist())
         linhas = sorted(seg["Linha"].astype(str).unique().tolist())
@@ -2774,7 +2801,7 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
         segf,
         x_start="Início",
         x_end="Fim",
-        y="Motorista",
+        y='Motorista_Label',
         color="Linha",
         pattern_shape="ZeroPass" if "ZeroPass" in segf.columns else None,
         pattern_shape_map={True: "x", False: ""} if "ZeroPass" in segf.columns else None,
@@ -2884,6 +2911,31 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
 
     seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
 
+    
+    # === Totais por motorista e rótulos com HE ===
+    def _fmt_hhmm(total_min):
+        try:
+            total_min = int(round(float(total_min)))
+        except Exception:
+            total_min = 0
+        h = total_min // 60
+        m = total_min % 60
+        return f"{h:02d}:{m:02d}"
+
+    _mask_work = seg["Veículo"].astype(str) != "Ocioso"
+    # usa a duração já calculada, zerando quando ocioso
+    _work_min = seg["Duração (min)"].where(_mask_work, 0.0)
+    _totais = seg.assign(__work_min=_work_min).groupby("Motorista", observed=False)["__work_min"].sum(min_count=1).fillna(0.0)
+
+    _limite_min = 7*60 + 20  # 07:20
+    mot_label_map = {}
+    for _mot, _mins in _totais.items():
+        _extra = max(0, _mins - _limite_min)
+        if _extra > 0:
+            # tenta negrito via HTML; se não suportar, ao menos exibe HE
+            mot_label_map[_mot] = f"<b>{_mot} — {_fmt_hhmm(_mins)} (HE {_fmt_hhmm(_extra)})</b>"
+        else:
+            mot_label_map[_mot] = f"{_mot} — {_fmt_hhmm(_mins)}"
     with st.expander("Filtros — Motoristas × Veículos"):
         mot_list = sorted(seg["Motorista"].astype(str).unique().tolist())
         veics = sorted(seg["Veículo"].astype(str).unique().tolist())
@@ -2928,7 +2980,7 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
         segf,
         x_start="Início",
         x_end="Fim",
-        y="Motorista",
+        y='Motorista_Label',
         color="Veículo",
         pattern_shape="ZeroPass" if "ZeroPass" in segf.columns else None,
         pattern_shape_map={True: "x", False: ""} if "ZeroPass" in segf.columns else None,
