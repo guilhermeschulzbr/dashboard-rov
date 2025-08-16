@@ -2581,6 +2581,7 @@ def _build_segments_events(df, vcol, lcol, tcol, day_start, day_end, idle_gap_mi
         segdf["Duração (min)"] = (segdf["Fim"] - segdf["Início"]).dt.total_seconds()/60.0
     return segdf
 
+
 def show_linha_do_tempo_alocacao_1dia(
     df,
     titulo="📆 Linha do tempo de alocação (1 dia)",
@@ -2590,34 +2591,6 @@ def show_linha_do_tempo_alocacao_1dia(
     from datetime import date as _date
 
     # Colunas fixas conforme solicitado
-    # Candidatos para total e componentes
-    CAND_PASS_TOTAL = ["Passageiros","Qtd Passageiros","Qtde Passageiros","Quantidade Passageiros","Total Passageiros","Passageiros Transportados","Qtd de Passageiros","Quantidade de Passageiros"]
-    CAND_PAGANTES   = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte","Pagantes","Quantidade Pagantes","Qtd Pagantes","Qtde Pagantes","Validações","Validacoes","Validacao","Validação","Embarques","Embarcados"]
-    CAND_GRAT       = ["Quant Gratuidade","Qtd Gratuidade","Qtde Gratuidade","Gratuidades","Gratuidade","Quantidade Gratuidade"]
-
-    def _num_from_row(row, cols):
-        import pandas as pd
-        total = 0.0
-        for c in cols:
-            if c in row.index:
-                v = pd.to_numeric(pd.Series([row[c]]), errors="coerce").iloc[0]
-                if pd.notna(v):
-                    total += float(v)
-        return float(total)
-
-    def _passageiros_row(row):
-        # 1) Se existir uma coluna de total direta, usa a primeira que aparecer
-        for c in CAND_PASS_TOTAL:
-            if c in row.index:
-                import pandas as pd
-                v = pd.to_numeric(pd.Series([row[c]]), errors="coerce").iloc[0]
-                return 0.0 if pd.isna(v) else float(v)
-        # 2) Caso contrário, soma pagantes + gratuidades conforme disponíveis
-        pag = _num_from_row(row, CAND_PAGANTES)
-        grat = _num_from_row(row, CAND_GRAT)
-        return float(pag + grat)
-
-    
     vcol = "Numero Veiculo"
     lcol = "Nome Linha"
     scol = "Data Hora Inicio Operacao"
@@ -2628,9 +2601,37 @@ def show_linha_do_tempo_alocacao_1dia(
         st.error("Colunas ausentes para o painel de alocação (1 dia): " + ", ".join(missing))
         return
 
+    # Candidatos para total e componentes
+    CAND_PASS_TOTAL = ["Passageiros","Qtd Passageiros","Qtde Passageiros","Quantidade Passageiros","Total Passageiros","Passageiros Transportados","Qtd de Passageiros","Quantidade de Passageiros"]
+    CAND_PAGANTES   = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte","Pagantes","Quantidade Pagantes","Qtd Pagantes","Qtde Pagantes","Validações","Validacoes","Validacao","Validação","Embarques","Embarcados"]
+    CAND_GRAT       = ["Quant Gratuidade","Qtd Gratuidade","Qtde Gratuidade","Gratuidades","Gratuidade","Quantidade Gratuidade"]
+
+    def _num_from_row(row, cols):
+        total = 0.0
+        for c in cols:
+            if c in row.index:
+                try:
+                    v = pd.to_numeric(row[c], errors="coerce")
+                    if pd.notna(v):
+                        total += float(v)
+                except Exception:
+                    pass
+        return float(total)
+
+    def _passageiros_row(row):
+        # 1) Se existir uma coluna de total direta, usa a primeira encontrada
+        for c in CAND_PASS_TOTAL:
+            if c in row.index:
+                v = pd.to_numeric(row[c], errors="coerce")
+                return 0.0 if pd.isna(v) else float(v)
+        # 2) Caso contrário, soma pagantes + gratuidades conforme disponíveis
+        pag = _num_from_row(row, CAND_PAGANTES)
+        grat = _num_from_row(row, CAND_GRAT)
+        return float(pag + grat)
+
     st.markdown("## " + titulo)
 
-    # Garantir tipos datetime
+    # Garantir tipos datetime das colunas principais
     df = df.copy()
     df[scol] = pd.to_datetime(df[scol], errors="coerce")
     df[ecol] = pd.to_datetime(df[ecol], errors="coerce")
@@ -2638,13 +2639,7 @@ def show_linha_do_tempo_alocacao_1dia(
     # Sugerir dia padrão a partir dos dados
     sdates = df[scol].dropna().dt.date
     edates = df[ecol].dropna().dt.date
-    day_default = None
-    if not sdates.empty:
-        day_default = sdates.min()
-    elif not edates.empty:
-        day_default = edates.min()
-    else:
-        day_default = _date.today()
+    day_default = sdates.min() if not sdates.empty else (edates.min() if not edates.empty else _date.today())
 
     # Seletor de 1 dia
     dia = st.date_input("Dia para análise (apenas 1 dia)", value=day_default, format="DD/MM/YYYY", key="aloc_dia")
@@ -2653,21 +2648,22 @@ def show_linha_do_tempo_alocacao_1dia(
     day_start = pd.Timestamp(dia).replace(hour=0, minute=0, second=0, microsecond=0)
     day_end   = day_start + pd.Timedelta(days=1)
 
-    # Filtrar registros que tocam o dia
-    tmp = df[[vcol, lcol, scol, ecol]].dropna(subset=[scol, ecol, vcol]).copy()
-    # recorte ao dia (se um trecho cruza o dia, clip)
+    # Montar tmp mantendo colunas de passageiros
+    pass_cols = [c for c in (CAND_PASS_TOTAL + CAND_PAGANTES + CAND_GRAT) if c in df.columns]
+    tmp = df[[vcol, lcol, scol, ecol] + pass_cols].dropna(subset=[scol, ecol, vcol]).copy()
+
+    # Construir segmentos (clipping ao dia) e calcular passageiros por registro
     segs = []
     for _, r in tmp.iterrows():
         s = r[scol]; e = r[ecol]
-        if s is None or e is None:
-            continue
-        if e <= day_start or s >= day_end:
+        if pd.isna(s) or pd.isna(e) or e <= day_start or s >= day_end:
             continue
         s_clip = max(s, day_start)
         e_clip = min(e, day_end)
         if s_clip >= e_clip:
             continue
-        segs.append({"Veículo": str(r[vcol]), "Linha": str(r[lcol]), "Início": s_clip, "Fim": e_clip, "Passageiros": _passageiros_row(r)})
+        pax = _passageiros_row(r)
+        segs.append({"Veículo": str(r[vcol]), "Linha": str(r[lcol]), "Início": s_clip, "Fim": e_clip, "Passageiros": pax})
 
     seg = pd.DataFrame(segs)
     if seg.empty:
@@ -2677,38 +2673,36 @@ def show_linha_do_tempo_alocacao_1dia(
     # Completar períodos ociosos por veículo para cobrir o dia todo
     seg = seg.sort_values(["Veículo", "Início", "Fim"])
     seg_ocioso = []
-    for veic, g in seg.groupby("Veículo"):
+    for veic, g in seg.groupby("Veículo", sort=False):
         cur = day_start
         for _, rr in g.iterrows():
             if rr["Início"] > cur:
-                seg_ocioso.append({"Veículo": veic, "Linha": "Ocioso", "Início": cur, "Fim": rr["Início"]})
+                seg_ocioso.append({"Veículo": veic, "Linha": "Ocioso", "Início": cur, "Fim": rr["Início"], "Passageiros": 0.0})
             cur = max(cur, rr["Fim"])
         if cur < day_end:
-            seg_ocioso.append({"Veículo": veic, "Linha": "Ocioso", "Início": cur, "Fim": day_end})
+            seg_ocioso.append({"Veículo": veic, "Linha": "Ocioso", "Início": cur, "Fim": day_end, "Passageiros": 0.0})
     if seg_ocioso:
         seg = pd.concat([seg, pd.DataFrame(seg_ocioso)], ignore_index=True).sort_values(["Veículo","Início"])
 
     seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
-    # Flag de viagens com zero passageiros (apenas para segmentos não-ociosos)
-    if "Passageiros" in seg.columns:
-        import pandas as pd
-        seg["ZeroPass"] = (seg["Linha"].astype(str) != "Ocioso") & (pd.to_numeric(seg["Passageiros"], errors="coerce").fillna(-1) == 0)
-    else:
-        seg["ZeroPass"] = False
 
     # Filtros
     with st.expander("Filtros de exibição"):
         seg["Veículo"] = seg["Veículo"].astype(str)  # garantir categórico por texto
         veics = sorted(seg["Veículo"].unique().tolist())
         linhas = sorted(seg["Linha"].astype(str).unique().tolist())
-        pick_veics = st.multiselect("Filtrar Veículos", veics, default=veics)
+        pick_veics = st.multiselect("Filtrar Veículos", veics, default=veics)  # TODOS por padrão
         pick_linhas = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=linhas)
         segf = seg[(seg["Veículo"].isin(pick_veics)) & (seg["Linha"].astype(str).isin(pick_linhas))]
     if segf.empty:
         st.info("Os filtros atuais não retornaram segmentos.")
         return
 
-    # Gráfico timeline (Veículo como categórico por texto)
+    # Flag de zero passageiros (apenas não-ocioso)
+    import pandas as pd as _pd  # local alias only for to_numeric
+    segf["ZeroPass"] = (segf["Linha"].astype(str) != "Ocioso") & (_pd.to_numeric(segf["Passageiros"], errors="coerce").fillna(-1) == 0)
+
+    # Gráfico timeline (Veículo categórico) + destaque ZeroPass com pattern
     segf = segf.copy()
     segf["Veículo"] = segf["Veículo"].astype(str)
     fig = px.timeline(
@@ -2722,7 +2716,7 @@ def show_linha_do_tempo_alocacao_1dia(
         hover_data={"Duração (min)":":.1f","Passageiros":True,"ZeroPass":True,"Veículo":True,"Linha":True,"Início":True,"Fim":True},
     )
     fig.update_yaxes(autorange="reversed", type="category")
-    fig.update_layout(height=600, xaxis_title="Horário", yaxis_title="Veículo")
+    fig.update_layout(height=650, xaxis_title="Horário", yaxis_title="Veículo")
     st.plotly_chart(fig, use_container_width=True)
 
     # Tabela + Download
@@ -2731,6 +2725,7 @@ def show_linha_do_tempo_alocacao_1dia(
     csv = segf.to_csv(index=False).encode("utf-8-sig")
     st.download_button("Baixar CSV da linha do tempo (1 dia)", data=csv, file_name="alocacao_veiculos_1dia.csv", mime="text/csv")
 # === Fim Painel: Linha do tempo de alocação (1 dia) ===
+
 
 # === Chamada: Linha do tempo de alocação (1 dia) ===
 # (guarded to evitar NameError se a função não estiver carregada ainda)
