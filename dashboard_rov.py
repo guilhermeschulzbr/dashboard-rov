@@ -2973,4 +2973,3 @@ try:
 except Exception as e:
     st.warning(f"Falha ao renderizar Rotatividade: {e}")
 # === Fim chamada ===
-
