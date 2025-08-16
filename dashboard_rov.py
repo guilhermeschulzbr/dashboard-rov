@@ -3081,102 +3081,375 @@ except Exception as e:
 # === Fim chamada: Timeline Motoristas × Veículos (1 dia) ===
 
 
-# ===================== RELATÓRIO EXECUTIVO (LOCAL) – INTEGRADO =====================
-# Esta seção adiciona um painel de Relatório Executivo (sem IA) sem alterar seus painéis atuais.
-# Requer: executive_report_local.py no mesmo diretório do app.
+# ===================== RELATÓRIO EXECUTIVO (LOCAL) – INLINE (SEM ARQUIVO EXTERNO) =====================
+# Este bloco torna o relatório executivo autossuficiente. Não depende de 'executive_report_local.py'.
 
+import streamlit as st
+import pandas as pd
+
+# Tenta importar o módulo externo. Se falhar, ativa engine INLINE.
 try:
-    import streamlit as st
-    import pandas as pd
     from executive_report_local import ReportParams, generate_report_from_df, export_all
-except Exception as _e:
-    import streamlit as st
-    st.error("Falha ao carregar módulo de relatório local. Certifique-se de que 'executive_report_local.py' está no mesmo diretório.")
-else:
-    with st.expander("📊 Relatório Executivo (Local) – clique para gerar", expanded=False):
-        st.caption("Geração local sem IA: heurísticas estatísticas, KPIs e recomendações.")
+    _ENGINE_INLINE = False
+except Exception:
+    _ENGINE_INLINE = True
 
-        # Descoberta automática de DataFrames globais
-        import inspect, sys
-        def _discover_dfs() -> dict:
-            dfs = {}
-            g = globals()
-            for k, v in list(g.items()):
-                if isinstance(v, pd.DataFrame) and len(v) > 0 and v.shape[1] > 1:
-                    dfs[k] = v
-            # Tenta também módulos importados pelo usuário (painéis que guardam dfs em outros módulos)
-            for mod in list(sys.modules.values()):
+if _ENGINE_INLINE:
+    # --------------------------- ENGINE INLINE (sem IA) ---------------------------
+    from dataclasses import dataclass
+    from typing import Dict, List, Optional, Tuple
+    import numpy as np
+    import re
+
+    @dataclass
+    class ReportParams:
+        date_col: Optional[str] = None
+        prefer_metrics: Optional[List[str]] = None
+        min_points: int = 7
+        top_k_metrics: int = 4
+        currency_symbol: str = "R$"
+        synonyms: Optional[Dict[str, List[str]]] = None
+
+    DEFAULT_SYNONYMS = {
+        "km_rodados": ["km","quilometros","quilômetros","kilometers","km_total","km_rodados","km_percorridos"],
+        "passageiros": ["passageiros","passengers","validacoes","validações","embarques","ridership"],
+        "receita": ["receita","revenue","faturamento","arrecadacao","arrecadação"],
+        "viagens": ["viagens","trips","viagem","servicos","serviços","journeys","servico"],
+        "pontualidade": ["pontualidade","on_time","on-time","punctuality"],
+        "cancelamentos": ["cancelamentos","cancellations","cancelamento"],
+        "ocupacao": ["ocupacao","ocupação","load_factor","taxa_ocupacao","lotacao","lotação"],
+        "custo_km": ["custo_km","rs_km","r$/km","custo por km","cost_per_km"],
+    }
+
+    def _infer_date_col(df: pd.DataFrame, explicit: Optional[str] = None) -> Optional[str]:
+        if explicit and explicit in df.columns:
+            return explicit
+        candidates = [c for c in df.columns if re.search(r"(data|date|dia|timestamp|datetime|data_hora)", str(c), re.I)]
+        for c in candidates + list(df.columns):
+            try:
+                pd.to_datetime(df[c], errors="raise")
+                return c
+            except Exception:
+                pass
+        return None
+
+    def _infer_metric_cols(df: pd.DataFrame, synonyms: Dict[str, List[str]], prefer: Optional[List[str]], max_k: int) -> List[str]:
+        cols = []
+        if prefer:
+            for p in prefer:
+                if p in df.columns and pd.api.types.is_numeric_dtype(df[p]):
+                    cols.append(p)
+        lowered = {c.lower(): c for c in df.columns}
+        for syns in synonyms.values():
+            for s in syns:
+                if s.lower() in lowered:
+                    col = lowered[s.lower()]
+                    if pd.api.types.is_numeric_dtype(df[col]) and col not in cols:
+                        cols.append(col)
+                        break
+        if len(cols) < max_k:
+            numeric = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+            variances = sorted(((c, float(np.nanvar(df[c].astype(float)))) for c in numeric if c not in cols), key=lambda x: x[1], reverse=True)
+            for c,_ in variances:
+                cols.append(c)
+                if len(cols) >= max_k:
+                    break
+        return cols[:max_k]
+
+    def _daily_agg(df: pd.DataFrame, date_col: str, metric_cols: List[str]) -> pd.DataFrame:
+        w = df.copy()
+        w[date_col] = pd.to_datetime(w[date_col], errors="coerce")
+        w = w.dropna(subset=[date_col])
+        for m in metric_cols:
+            w[m] = pd.to_numeric(w[m], errors="coerce")
+        g = w.groupby(w[date_col].dt.date)[metric_cols].sum().reset_index().rename(columns={date_col: "data"})
+        g["data"] = pd.to_datetime(g["data"])
+        return g.sort_values("data")
+
+    def _lin_trend(y: pd.Series) -> float:
+        y = y.astype(float)
+        n = len(y)
+        if n < 2 or y.isna().all():
+            return 0.0
+        x = np.arange(n, dtype=float)
+        try:
+            return float(np.polyfit(x, y.fillna(method="ffill").fillna(method="bfill"), 1)[0])
+        except Exception:
+            return 0.0
+
+    def _iqr_outliers(y: pd.Series):
+        s = y.astype(float).dropna()
+        if len(s) < 4:
+            return [], 0.0
+        q1, q3 = np.percentile(s, [25, 75])
+        iqr = q3 - q1
+        low, high = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+        idx = [i for i, v in enumerate(y) if not pd.isna(v) and (v < low or v > high)]
+        amp = 0.0 if q3 == 0 else (iqr / (abs(q3) + 1e-6))
+        return idx, float(amp)
+
+    def _pct_change(a: float, b: float):
+        if b in (0, None) or pd.isna(b) or pd.isna(a):
+            return None
+        try:
+            return float((a - b) / b) * 100.0
+        except Exception:
+            return None
+
+    def compute_kpis(ts: pd.DataFrame, metric_cols: List[str]):
+        res = {}
+        if ts.empty:
+            return res
+        for m in metric_cols:
+            s = ts[m].astype(float)
+            total = float(np.nansum(s))
+            mean = float(np.nanmean(s)) if len(s) else float("nan")
+            last = float(s.iloc[-1]) if len(s) else float("nan")
+            prev = float(s.iloc[-2]) if len(s) > 1 else float("nan")
+            delta = _pct_change(last, prev) if not (pd.isna(last) or pd.isna(prev)) else None
+            slope = _lin_trend(s)
+            out_idx, amp = _iqr_outliers(s)
+            res[m] = {
+                "total": total,
+                "media_dia": mean,
+                "ultimo": last,
+                "delta_pct_diario": float(delta) if delta is not None else float("nan"),
+                "tendencia_dia": slope,
+                "anomalias": len(out_idx),
+                "amplitude_relativa": amp,
+            }
+        return res
+
+    def _format_num(v: float, currency: bool = False, currency_symbol: str = "R$") -> str:
+        if v is None or pd.isna(v):
+            return "—"
+        if currency:
+            return f"{currency_symbol} {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        if abs(v) >= 1000:
+            return f"{v:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"{v:.2f}".replace(".", ",")
+
+    def _rank_metrics_by_impact(kpis):
+        sc = []
+        for m, d in kpis.items():
+            total = abs(d.get("total", 0.0))
+            slope = abs(d.get("tendencia_dia", 0.0))
+            ano = float(d.get("anomalias", 0))
+            score = total * (1.0 + slope) * (1.0 + 0.15 * ano)
+            sc.append((m, score))
+        sc.sort(key=lambda x: x[1], reverse=True)
+        return [m for m, _ in sc]
+
+    def build_insights(ts, kpis, date_range):
+        ini, fim = date_range
+        pos, neg, riscos, acoes = [], [], [], []
+        for m, d in kpis.items():
+            slope = d.get("tendencia_dia", 0.0)
+            delta = d.get("delta_pct_diario", float("nan"))
+            ano = int(d.get("anomalias", 0))
+            if slope > 0 and (not pd.isna(delta) and delta > 0):
+                pos.append(f"**{m}** em alta e variação recente de {delta:.1f}% no período.")
+            if slope < 0 and (not pd.isna(delta) and delta < 0):
+                neg.append(f"**{m}** em queda com variação recente de {delta:.1f}% no período.")
+            if ano >= 3:
+                riscos.append(f"**{m}** apresentou {ano} anomalias; recomenda-se investigação de causas específicas.")
+            if slope < 0 and not pd.isna(delta) and delta < -3:
+                acoes.append(f"Revisar processos ligados a **{m}**; implementar contramedidas em 7-14 dias.")
+            if slope > 0 and not pd.isna(delta) and delta > 3:
+                acoes.append(f"Capturar ganhos de **{m}**; padronizar boas práticas.")
+        if not pos:
+            pos.append("Estabilidade operacional sem picos positivos relevantes.")
+        if not neg:
+            neg.append("Sem quedas significativas; monitorar continuidade das tendências.")
+        if not acoes:
+            acoes.append("Manter monitoramento semanal e revisão mensal de metas.")
+        return {"positivos": pos[:5], "negativos": neg[:5], "riscos": riscos[:5] if riscos else ["Sem riscos críticos aparentes."], "acoes": acoes[:6]}
+
+    def compose_markdown_report(period, metric_order, kpis, currency_symbol="R$"):
+        ini, fim = period
+        lines = []
+        lines.append("# Relatório Executivo – Visão Operacional (Local)")
+        lines.append(f"**Período analisado:** {ini.date().strftime('%d/%m/%Y')} a {fim.date().strftime('%d/%m/%Y')}")
+        lines.append("")
+        lines.append("## KPIs-Chave")
+        for m in metric_order:
+            d = kpis[m]
+            money_like = any(x in m.lower() for x in ["receita","custo","rs","r$/","fatur"])
+            lines.append(f"- **{m}** | Total: {_format_num(d['total'], currency=money_like, currency_symbol=currency_symbol)} | "
+                         f"Média/dia: {_format_num(d['media_dia'], currency=money_like, currency_symbol=currency_symbol)} | "
+                         f"Último: {_format_num(d['ultimo'], currency=money_like, currency_symbol=currency_symbol)} | "
+                         f"Δ vs. anterior: {_format_num(d['delta_pct_diario'])}% | "
+                         f"Tendência (dia): {_format_num(d['tendencia_dia'])} | "
+                         f"Anomalias: {int(d['anomalias'])}")
+        lines.append("")
+        ins = build_insights(None, kpis, period)
+        lines.append("## Sumário Executivo")
+        for s in ins["positivos"]:
+            lines.append(f"- ✅ {s}")
+        for s in ins["negativos"]:
+            lines.append(f"- ⚠️ {s}")
+        for s in ins["riscos"]:
+            lines.append(f"- 🛡️ {s}")
+        lines.append("")
+        lines.append("## Recomendações Prioritárias (Próximos 30 dias)")
+        for s in ins["acoes"]:
+            lines.append(f"- 🔧 {s}")
+        lines.append("")
+        lines.append("> **Nota:** Relatório gerado localmente por heurísticas (sem IA).")
+        return "\n".join(lines)
+
+    def generate_report_from_df(df: pd.DataFrame, params: Optional[ReportParams] = None):
+        if params is None:
+            params = ReportParams()
+        syn = params.synonyms or DEFAULT_SYNONYMS
+        date_col = _infer_date_col(df, params.date_col)
+        if not date_col:
+            raise ValueError("Não foi possível identificar a coluna de data. Informe `params.date_col`.")
+        metric_cols = _infer_metric_cols(df, syn, params.prefer_metrics, params.top_k_metrics)
+        ts = _daily_agg(df, date_col, metric_cols)
+        if ts.empty:
+            raise ValueError("Após a agregação diária, não há dados suficientes para gerar o relatório.")
+        kpis = compute_kpis(ts, metric_cols)
+        order = _rank_metrics_by_impact(kpis)
+        ini, fim = ts["data"].min(), ts["data"].max()
+        md = compose_markdown_report((ini, fim), order, kpis, params.currency_symbol)
+        return md, ts, order
+
+    def export_all(md_text: str, basepath_no_ext: str):
+        outs = {"md": md_text.encode("utf-8")}
+        # DOCX
+        try:
+            from docx import Document
+            from docx.shared import Pt
+            doc = Document()
+            style = doc.styles['Normal']
+            style.font.name = 'Calibri'
+            style.font.size = Pt(11)
+            for line in md_text.splitlines():
+                if line.startswith("# "): doc.add_heading(line[2:].strip(), level=1)
+                elif line.startswith("## "): doc.add_heading(line[3:].strip(), level=2)
+                elif line.startswith("- "): doc.add_paragraph(line[2:].strip())
+                elif line.startswith("> "): doc.add_paragraph(line[2:].strip())
+                else: doc.add_paragraph(line.strip())
+            from pathlib import Path as _P
+            docx_path = f"{basepath_no_ext}.docx"
+            doc.save(docx_path)
+            outs["docx"] = _P(docx_path).read_bytes()
+        except Exception:
+            pass
+        # PDF
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+            from reportlab.lib.units import cm
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.enums import TA_JUSTIFY
+            from pathlib import Path as _P
+            pdf_path = f"{basepath_no_ext}.pdf"
+            doc = SimpleDocTemplate(pdf_path, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
+            styles = getSampleStyleSheet()
+            normal = styles['Normal']
+            h1 = styles['Heading1']
+            h2 = styles['Heading2']
+            bullet = ParagraphStyle('Bullet', parent=normal, leftIndent=12)
+            body = []
+            for line in md_text.splitlines():
+                if line.startswith("# "): body.append(Paragraph(line[2:].strip(), h1)); body.append(Spacer(1, 6))
+                elif line.startswith("## "): body.append(Paragraph(line[3:].strip(), h2)); body.append(Spacer(1, 6))
+                elif line.startswith("- "): body.append(Paragraph(line[2:].strip(), bullet))
+                elif line.startswith("> "): body.append(Paragraph(f"<i>{line[2:].strip()}</i>", normal)); body.append(Spacer(1, 6))
+                else:
+                    if line.strip(): body.append(Paragraph(line.strip(), normal))
+                    body.append(Spacer(1, 4))
+            doc.build(body)
+            outs["pdf"] = _P(pdf_path).read_bytes()
+        except Exception:
+            pass
+        return outs
+    # ------------------------- FIM ENGINE INLINE -------------------------
+
+# ---------- UI do Relatório ----------
+with st.expander("📊 Relatório Executivo (Local) – clique para gerar", expanded=False):
+    st.caption("Geração local sem IA: heurísticas estatísticas, KPIs e recomendações.")
+
+    import sys
+    def _discover_dfs() -> dict:
+        dfs = {}
+        g = globals()
+        for k, v in list(g.items()):
+            if isinstance(v, pd.DataFrame) and len(v) > 0 and v.shape[1] > 1:
+                dfs[k] = v
+        for mod in list(sys.modules.values()):
+            try:
+                for k, v in list(vars(mod).items()):
+                    if isinstance(v, pd.DataFrame) and len(v) > 0 and v.shape[1] > 1 and k not in dfs:
+                        dfs[k] = v
+            except Exception:
+                pass
+        return dict(sorted(dfs.items(), key=lambda kv: len(kv[1]), reverse=True))
+
+    dfs = _discover_dfs()
+    if not dfs:
+        st.info("Nenhum DataFrame relevante foi encontrado automaticamente. "
+                "Execute os painéis que carregam os dados antes de abrir este bloco.")
+    else:
+        df_names = list(dfs.keys())
+        df_choice = st.selectbox("Selecione o DataFrame base para o relatório", options=df_names, index=0)
+        df_selected = dfs[df_choice]
+
+        date_col_hint = st.text_input("Nome da coluna de data (opcional)", value="")
+        currency = st.selectbox("Moeda para formatação", options=["R$", "$", "€"], index=0)
+        topk = st.slider("Máx. métricas no relatório", 2, 8, 4)
+
+        colA, colB = st.columns([1,1])
+        with colA:
+            if st.button("Gerar Relatório Executivo (Local)", type="primary", use_container_width=True):
                 try:
-                    for k, v in list(vars(mod).items()):
-                        if isinstance(v, pd.DataFrame) and len(v) > 0 and v.shape[1] > 1 and k not in dfs:
-                            dfs[k] = v
-                except Exception:
-                    pass
-            # Ordena pelo número de linhas (maior primeiro)
-            return dict(sorted(dfs.items(), key=lambda kv: len(kv[1]), reverse=True))
+                    params = ReportParams(
+                        date_col=date_col_hint or None,
+                        top_k_metrics=int(topk),
+                        currency_symbol=currency
+                    )
+                    md, ts_df, order = generate_report_from_df(df_selected, params=params)
+                    st.session_state["exec_report_local_md"] = md
+                    st.session_state["exec_report_local_dfname"] = df_choice
+                    st.success("Relatório gerado com sucesso.")
+                except Exception as e:
+                    st.error(f"Falha ao gerar o relatório: {e}")
 
-        dfs = _discover_dfs()
-        if not dfs:
-            st.info("Nenhum DataFrame relevante foi encontrado automaticamente. "
-                    "Certifique-se de executar os painéis que carregam os dados antes de abrir este bloco.")
-        else:
-            df_names = list(dfs.keys())
-            df_choice = st.selectbox("Selecione o DataFrame base para o relatório", options=df_names, index=0)
-            df_selected = dfs[df_choice]
+        with colB:
+            if "exec_report_local_md" in st.session_state:
+                st.download_button("Baixar Markdown",
+                    data=st.session_state["exec_report_local_md"].encode("utf-8"),
+                    file_name="relatorio_executivo_local.md",
+                    mime="text/markdown",
+                    use_container_width=True)
+            else:
+                st.download_button("Baixar Markdown", data=b"", file_name="relatorio_executivo_local.md",
+                    disabled=True, use_container_width=True)
 
-            date_col_hint = st.text_input("Nome da coluna de data (opcional, inferência automática se vazio)", value="")
-            currency = st.selectbox("Moeda para formatação", options=["R$", "$", "€"], index=0)
-            topk = st.slider("Máx. métricas no relatório", 2, 8, 4)
+        if "exec_report_local_md" in st.session_state:
+            st.subheader("Relatório – Pré-visualização")
+            st.markdown(st.session_state["exec_report_local_md"])
 
-            colA, colB = st.columns([1,1])
-            with colA:
-                if st.button("Gerar Relatório Executivo (Local)", type="primary", use_container_width=True):
-                    try:
-                        params = ReportParams(
-                            date_col=date_col_hint or None,
-                            top_k_metrics=int(topk),
-                            currency_symbol=currency
-                        )
-                        md, ts_df, order = generate_report_from_df(df_selected, params=params)
-                        st.session_state["exec_report_local_md"] = md
-                        st.session_state["exec_report_local_dfname"] = df_choice
-                        st.success("Relatório gerado com sucesso.")
-                    except Exception as e:
-                        st.error(f"Falha ao gerar o relatório: {e}")
+            st.divider()
+            st.subheader("Exportar PDF e DOCX")
+            outs = export_all(st.session_state["exec_report_local_md"], "/tmp/relatorio_executivo_local")
 
-            with colB:
-                if "exec_report_local_md" in st.session_state:
-                    st.download_button("Baixar Markdown",
-                        data=st.session_state["exec_report_local_md"].encode("utf-8"),
-                        file_name="relatorio_executivo_local.md",
-                        mime="text/markdown",
+            c1, c2 = st.columns(2)
+            with c1:
+                if "pdf" in outs:
+                    st.download_button("Baixar PDF", data=outs["pdf"],
+                        file_name="relatorio_executivo_local.pdf", mime="application/pdf",
                         use_container_width=True)
                 else:
-                    st.download_button("Baixar Markdown", data=b"", file_name="relatorio_executivo_local.md",
-                        disabled=True, use_container_width=True)
-
-            if "exec_report_local_md" in st.session_state:
-                st.subheader("Relatório – Pré-visualização")
-                st.markdown(st.session_state["exec_report_local_md"])
-
-                st.divider()
-                st.subheader("Exportar PDF e DOCX")
-                outs = export_all(st.session_state["exec_report_local_md"], "/tmp/relatorio_executivo_local")
-
-                c1, c2 = st.columns(2)
-                with c1:
-                    if "pdf" in outs:
-                        st.download_button("Baixar PDF", data=outs["pdf"],
-                            file_name="relatorio_executivo_local.pdf", mime="application/pdf",
-                            use_container_width=True)
-                    else:
-                        st.info("Para gerar PDF, instale: `pip install reportlab`")
-                with c2:
-                    if "docx" in outs:
-                        st.download_button("Baixar DOCX", data=outs["docx"],
-                            file_name="relatorio_executivo_local.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            use_container_width=True)
-                    else:
-                        st.info("Para gerar DOCX, instale: `pip install python-docx`")
-# =================== FIM – RELATÓRIO EXECUTIVO (LOCAL) INTEGRADO ===================
+                    st.info("Para gerar PDF, instale: `pip install reportlab`")
+            with c2:
+                if "docx" in outs:
+                    st.download_button("Baixar DOCX", data=outs["docx"],
+                        file_name="relatorio_executivo_local.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True)
+                else:
+                    st.info("Para gerar DOCX, instale: `pip install python-docx`")
+# =================== FIM – RELATÓRIO EXECUTIVO (LOCAL) INLINE ===================
