@@ -2754,3 +2754,318 @@ try:
 except Exception as e:
     st.warning(f"Falha ao renderizar painel de alocação (1 dia): {e}")
 # === Fim chamada: Linha do tempo de alocação (1 dia) ===
+
+
+# === Painel: Linha do tempo - Motoristas x Linhas (1 dia) ===
+def show_linha_do_tempo_motoristas_linhas_1dia(
+    df,
+    titulo="📆 Linha do tempo: Motoristas x Linhas (1 dia)",
+):
+    import pandas as pd
+    import plotly.express as px
+
+    vcol = "Numero Veiculo"
+    lcol = "Nome Linha"
+    scol = "Data Hora Inicio Operacao"
+    ecol = "Data Hora Final Operacao"
+
+    # candidatos para coluna de motorista
+    M_CANDS = ["Motorista","Operador","Cobrador/Operador","MOTORISTA","Matricula","Matrícula","CPF Motorista","ID Motorista","Nome Motorista","Nome do Motorista"]
+    mcol = next((c for c in M_CANDS if c in df.columns), None)
+
+    missing = [c for c in [mcol, lcol, scol, ecol] if c is None or c not in df.columns]
+    if missing:
+        st.error("Colunas ausentes para o painel Motoristas x Linhas: " + ", ".join(map(str, missing)))
+        return
+
+    # candidatos de passageiros
+    CAND_PASS_TOTAL = ["Passageiros","Qtd Passageiros","Qtde Passageiros","Quantidade Passageiros","Total Passageiros","Passageiros Transportados","Qtd de Passageiros","Quantidade de Passageiros"]
+    CAND_PAGANTES   = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte","Pagantes","Quantidade Pagantes","Qtd Pagantes","Qtde Pagantes","Validações","Validacoes","Validacao","Validação","Embarques","Embarcados"]
+    CAND_GRAT       = ["Quant Gratuidade","Qtd Gratuidade","Qtde Gratuidade","Gratuidades","Gratuidade","Quantidade Gratuidade"]
+
+    def _num_from_row(row, cols):
+        total = 0.0
+        for c in cols:
+            if c in row.index:
+                try:
+                    v = pd.to_numeric(row[c], errors="coerce")
+                    if pd.notna(v):
+                        total += float(v)
+                except Exception:
+                    pass
+        return float(total)
+
+    def _passageiros_row(row):
+        for c in CAND_PASS_TOTAL:
+            if c in row.index:
+                v = pd.to_numeric(row[c], errors="coerce")
+                return 0.0 if pd.isna(v) else float(v)
+        pag = _num_from_row(row, CAND_PAGANTES)
+        grat = _num_from_row(row, CAND_GRAT)
+        return float(pag + grat)
+
+    st.markdown("## " + titulo)
+
+    df = df.copy()
+    df[scol] = pd.to_datetime(df[scol], errors="coerce")
+    df[ecol] = pd.to_datetime(df[ecol], errors="coerce")
+
+    # dia sugerido
+    from datetime import date as _date
+    sdates = df[scol].dropna().dt.date
+    edates = df[ecol].dropna().dt.date
+    day_default = sdates.min() if not sdates.empty else (edates.min() if not edates.empty else _date.today())
+
+    dia = st.date_input("Dia (1 dia) — Motoristas x Linhas", value=day_default, format="DD/MM/YYYY", key="mot_lin_dia")
+
+    # janela do dia
+    day_start = pd.Timestamp(dia).replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end   = day_start + pd.Timedelta(days=1)
+
+    pass_cols = [c for c in (CAND_PASS_TOTAL + CAND_PAGANTES + CAND_GRAT) if c in df.columns]
+    tmp = df[[mcol, lcol, scol, ecol] + pass_cols].dropna(subset=[mcol, scol, ecol]).copy()
+
+    segs = []
+    for _, r in tmp.iterrows():
+        s = r[scol]; e = r[ecol]
+        if pd.isna(s) or pd.isna(e) or e <= day_start or s >= day_end:
+            continue
+        s_clip = max(s, day_start)
+        e_clip = min(e, day_end)
+        if s_clip >= e_clip:
+            continue
+        pax = _passageiros_row(r)
+        segs.append({"Motorista": str(r[mcol]), "Linha": str(r[lcol]), "Início": s_clip, "Fim": e_clip, "Passageiros": pax})
+
+    seg = pd.DataFrame(segs)
+    if seg.empty:
+        st.info("Sem segmentos para o dia selecionado.")
+        return
+
+    # completar ociosos por motorista
+    seg = seg.sort_values(["Motorista", "Início", "Fim"])
+    ociosos = []
+    for mot, g in seg.groupby("Motorista", sort=False):
+        cur = day_start
+        for _, rr in g.iterrows():
+            if rr["Início"] > cur:
+                ociosos.append({"Motorista": mot, "Linha": "Ocioso", "Início": cur, "Fim": rr["Início"], "Passageiros": 0.0})
+            cur = max(cur, rr["Fim"])
+        if cur < day_end:
+            ociosos.append({"Motorista": mot, "Linha": "Ocioso", "Início": cur, "Fim": day_end, "Passageiros": 0.0})
+    if ociosos:
+        seg = pd.concat([seg, pd.DataFrame(ociosos)], ignore_index=True).sort_values(["Motorista","Início"])
+
+    seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
+
+    # filtros
+    with st.expander("Filtros — Motoristas x Linhas"):
+        mot_list = sorted(seg["Motorista"].astype(str).unique().tolist())
+        linhas = sorted(seg["Linha"].astype(str).unique().tolist())
+        pick_mot = st.multiselect("Filtrar Motoristas", mot_list, default=mot_list)
+        pick_lin = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=linhas)
+        segf = seg[(seg["Motorista"].isin(pick_mot)) & (seg["Linha"].astype(str).isin(pick_lin))]
+    if segf.empty:
+        st.info("Os filtros atuais não retornaram segmentos.")
+        return
+
+    segf = segf.copy()
+    segf["ZeroPass"] = (segf["Linha"].astype(str) != "Ocioso") & (pd.to_numeric(segf["Passageiros"], errors="coerce").fillna(-1) == 0)
+
+    fig = px.timeline(
+        segf,
+        x_start="Início",
+        x_end="Fim",
+        y="Motorista",
+        color="Linha",
+        pattern_shape="ZeroPass",
+        pattern_shape_map={True: "x", False: ""},
+        hover_data={"Duração (min)":":.1f","Passageiros":True,"ZeroPass":True,"Motorista":True,"Linha":True,"Início":True,"Fim":True},
+    )
+    fig.update_yaxes(autorange="reversed", type="category")
+    fig.update_layout(height=650, xaxis_title="Horário", yaxis_title="Motorista")
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("#### Segmentos — Motoristas x Linhas")
+    st.dataframe(segf, use_container_width=True, hide_index=True)
+    csv = segf.to_csv(index=False).encode("utf-8-sig")
+    st.download_button("Baixar CSV (motoristas x linhas - 1 dia)", data=csv, file_name="motoristas_x_linhas_1dia.csv", mime="text/csv")
+# === Fim Painel: Motoristas x Linhas (1 dia) ===
+
+# === Painel: Linha do tempo - Motoristas x Veículos (1 dia) ===
+def show_linha_do_tempo_motoristas_veiculos_1dia(
+    df,
+    titulo="📆 Linha do tempo: Motoristas x Veículos (1 dia)",
+):
+    import pandas as pd
+    import plotly.express as px
+
+    vcol = "Numero Veiculo"
+    scol = "Data Hora Inicio Operacao"
+    ecol = "Data Hora Final Operacao"
+    M_CANDS = ["Motorista","Operador","Cobrador/Operador","MOTORISTA","Matricula","Matrícula","CPF Motorista","ID Motorista","Nome Motorista","Nome do Motorista"]
+    mcol = next((c for c in M_CANDS if c in df.columns), None)
+
+    missing = [c for c in [mcol, vcol, scol, ecol] if c is None or c not in df.columns]
+    if missing:
+        st.error("Colunas ausentes para o painel Motoristas x Veículos: " + ", ".join(map(str, missing)))
+        return
+
+    # candidatos de passageiros
+    CAND_PASS_TOTAL = ["Passageiros","Qtd Passageiros","Qtde Passageiros","Quantidade Passageiros","Total Passageiros","Passageiros Transportados","Qtd de Passageiros","Quantidade de Passageiros"]
+    CAND_PAGANTES   = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte","Pagantes","Quantidade Pagantes","Qtd Pagantes","Qtde Pagantes","Validações","Validacoes","Validacao","Validação","Embarques","Embarcados"]
+    CAND_GRAT       = ["Quant Gratuidade","Qtd Gratuidade","Qtde Gratuidade","Gratuidades","Gratuidade","Quantidade Gratuidade"]
+
+    def _num_from_row(row, cols):
+        total = 0.0
+        for c in cols:
+            if c in row.index:
+                try:
+                    v = pd.to_numeric(row[c], errors="coerce")
+                    if pd.notna(v):
+                        total += float(v)
+                except Exception:
+                    pass
+        return float(total)
+
+    def _passageiros_row(row):
+        for c in CAND_PASS_TOTAL:
+            if c in row.index:
+                v = pd.to_numeric(row[c], errors="coerce")
+                return 0.0 if pd.isna(v) else float(v)
+        pag = _num_from_row(row, CAND_PAGANTES)
+        grat = _num_from_row(row, CAND_GRAT)
+        return float(pag + grat)
+
+    st.markdown("## " + titulo)
+
+    df = df.copy()
+    df[scol] = pd.to_datetime(df[scol], errors="coerce")
+    df[ecol] = pd.to_datetime(df[ecol], errors="coerce")
+
+    from datetime import date as _date
+    sdates = df[scol].dropna().dt.date
+    edates = df[ecol].dropna().dt.date
+    day_default = sdates.min() if not sdates.empty else (edates.min() if not edates.empty else _date.today())
+
+    dia = st.date_input("Dia (1 dia) — Motoristas x Veículos", value=day_default, format="DD/MM/YYYY", key="mot_vei_dia")
+
+    day_start = pd.Timestamp(dia).replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end   = day_start + pd.Timedelta(days=1)
+
+    pass_cols = [c for c in (CAND_PASS_TOTAL + CAND_PAGANTES + CAND_GRAT) if c in df.columns]
+    tmp = df[[mcol, vcol, scol, ecol] + pass_cols].dropna(subset=[mcol, vcol, scol, ecol]).copy()
+
+    segs = []
+    for _, r in tmp.iterrows():
+        s = r[scol]; e = r[ecol]
+        if pd.isna(s) or pd.isna(e) or e <= day_start or s >= day_end:
+            continue
+        s_clip = max(s, day_start)
+        e_clip = min(e, day_end)
+        if s_clip >= e_clip:
+            continue
+        pax = _passageiros_row(r)
+        segs.append({"Motorista": str(r[mcol]), "Veículo": str(r[vcol]), "Início": s_clip, "Fim": e_clip, "Passageiros": pax})
+
+    seg = pd.DataFrame(segs)
+    if seg.empty:
+        st.info("Sem segmentos para o dia selecionado.")
+        return
+
+    seg = seg.sort_values(["Motorista", "Início", "Fim"])
+    ociosos = []
+    for mot, g in seg.groupby("Motorista", sort=False):
+        cur = day_start
+        for _, rr in g.iterrows():
+            if rr["Início"] > cur:
+                ociosos.append({"Motorista": mot, "Veículo": "Ocioso", "Início": cur, "Fim": rr["Início"], "Passageiros": 0.0})
+            cur = max(cur, rr["Fim"])
+        if cur < day_end:
+            ociosos.append({"Motorista": mot, "Veículo": "Ocioso", "Início": cur, "Fim": day_end, "Passageiros": 0.0})
+    if ociosos:
+        seg = pd.concat([seg, pd.DataFrame(ociosos)], ignore_index=True).sort_values(["Motorista","Início"])
+
+    seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
+
+    with st.expander("Filtros — Motoristas x Veículos"):
+        mot_list = sorted(seg["Motorista"].astype(str).unique().tolist())
+        veics = sorted(seg["Veículo"].astype(str).unique().tolist())
+        pick_mot = st.multiselect("Filtrar Motoristas", mot_list, default=mot_list)
+        pick_vei = st.multiselect("Filtrar Veículos (inclui 'Ocioso')", veics, default=veics)
+        segf = seg[(seg["Motorista"].isin(pick_mot)) & (seg["Veículo"].astype(str).isin(pick_vei))]
+    if segf.empty:
+        st.info("Os filtros atuais não retornaram segmentos.")
+        return
+
+    segf = segf.copy()
+    segf["ZeroPass"] = (segf["Veículo"].astype(str) != "Ocioso") & (pd.to_numeric(segf["Passageiros"], errors="coerce").fillna(-1) == 0)
+    segf["Veículo"] = segf["Veículo"].astype(str)
+
+    fig = px.timeline(
+        segf,
+        x_start="Início",
+        x_end="Fim",
+        y="Motorista",
+        color="Veículo",
+        pattern_shape="ZeroPass",
+        pattern_shape_map={True: "x", False: ""},
+        hover_data={"Duração (min)":":.1f","Passageiros":True,"ZeroPass":True,"Motorista":True,"Veículo":True,"Início":True,"Fim":True},
+    )
+    fig.update_yaxes(autorange="reversed", type="category")
+    fig.update_layout(height=650, xaxis_title="Horário", yaxis_title="Motorista")
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("#### Segmentos — Motoristas x Veículos")
+    st.dataframe(segf, use_container_width=True, hide_index=True)
+    csv = segf.to_csv(index=False).encode("utf-8-sig")
+    st.download_button("Baixar CSV (motoristas x veículos - 1 dia)", data=csv, file_name="motoristas_x_veiculos_1dia.csv", mime="text/csv")
+# === Fim Painel: Motoristas x Veículos (1 dia) ===
+
+
+# === Chamada: Timeline Motoristas x Linhas (1 dia) ===
+try:
+    if 'show_linha_do_tempo_motoristas_linhas_1dia' in globals():
+        _df_candidates = [
+            'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df'
+        ]
+        df_base_mot = None
+        for _name in _df_candidates:
+            if _name in globals():
+                _obj = globals()[_name]
+                try:
+                    import pandas as _pd
+                    if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
+                        df_base_mot = _obj
+                        break
+                except Exception:
+                    pass
+        if df_base_mot is not None:
+            show_linha_do_tempo_motoristas_linhas_1dia(df_base_mot)
+except Exception as e:
+    st.warning(f"Falha ao renderizar painel Motoristas x Linhas: {e}")
+# === Fim chamada: Timeline Motoristas x Linhas (1 dia) ===
+
+# === Chamada: Timeline Motoristas x Veículos (1 dia) ===
+try:
+    if 'show_linha_do_tempo_motoristas_veiculos_1dia' in globals():
+        _df_candidates = [
+            'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df'
+        ]
+        df_base_motv = None
+        for _name in _df_candidates:
+            if _name in globals():
+                _obj = globals()[_name]
+                try:
+                    import pandas as _pd
+                    if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
+                        df_base_motv = _obj
+                        break
+                except Exception:
+                    pass
+        if df_base_motv is not None:
+            show_linha_do_tempo_motoristas_veiculos_1dia(df_base_motv)
+except Exception as e:
+    st.warning(f"Falha ao renderizar painel Motoristas x Veículos: {e}")
+# === Fim chamada: Timeline Motoristas x Veículos (1 dia) ===
+
