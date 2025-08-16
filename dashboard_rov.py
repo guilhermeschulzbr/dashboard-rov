@@ -2454,13 +2454,16 @@ def show_tabela_horas_motoristas_periodo(df, titulo="🗓️ Tabela de horas por
     # Preparar Styler com formatação e cores
     rename_cols = {c: pd.Timestamp(c).strftime("%d/%m") for c in day_cols}
     day_cols_ren = [rename_cols.get(c, c) for c in day_cols]
-    display_df = final_num.rename(columns=rename_cols)
+    display_df = final_num.rename(columns=rename_cols).reset_index()
+    # Prefixo visual para quem trabalhou >=7 dias seguidos
+    _flag_map = trabalhou_gt6.to_dict()
+    display_df["Motorista"] = display_df["Motorista"].astype(str).map(lambda x: "🔴 " + x if _flag_map.get(x, False) else x)
     sty = display_df.style
     sty = sty.apply(color_cells, subset=day_cols_ren, axis=1)
     fmt_cols = day_cols_ren + ["Total (min)", "HE Total (min)", "Horas Negativas (min)"]
     sty = sty.format(_fmt_hhmm, subset=fmt_cols)
 
-    st.markdown("#### Tabela de horas (cores: vermelho >07:20, amarelo <06:00, verde entre 06:00–07:20)")
+    st.markdown("#### Tabela de horas (cores: vermelho >07:20, amarelo <06:00, verde entre 06:00–07:20) — 🔴 motorista com sequência ≥7 dias")
     st.write(sty)
 
     # Download CSV (com HH:MM)
