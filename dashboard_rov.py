@@ -14,8 +14,6 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-
-
 # === Helper: total de passageiros (pagantes + gratuidades) ===
 def _compute_total_passageiros(df):
     import pandas as pd
@@ -47,13 +45,11 @@ try:
 except Exception:
     _HAS_SKLEARN = False
 
-
 try:
     from prophet import Prophet  # pip install prophet
     _HAS_PROPHET = True
 except Exception:
     _HAS_PROPHET = False
-
 
 # ------------------------------
 # Configuração da página
@@ -121,7 +117,6 @@ def df_fmt_currency(df: pd.DataFrame, cols: list[str], nd=2) -> pd.DataFrame:
         if c in df2.columns:
             df2[c] = df2[c].apply(lambda v: fmt_currency(v, nd))
     return df2
-
 
 # ------------------------------
 # Utilitários de UI/Detalhes
@@ -214,9 +209,7 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
     else:
         g1.info("Sem base de datas para série por dia.")
 
-        if '_TotPass' not in dfm.columns:
 # Distribuição por linha (passageiros)
-    if '_TotPass' not in dfm.columns:
 
     if "Nome Linha" in dfm.columns:
         by_line = dfm.groupby("Nome Linha", as_index=False, observed=False)["_TotPass"].sum().rename(columns={"_TotPass":"Passageiros"}).sort_values("Passageiros", ascending=False).head(12)
@@ -246,7 +239,6 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
         if "Quant Gratuidade" in df_show.columns:
             df_show["Quant Gratuidade"] = df_show["Quant Gratuidade"].apply(fmt_int)
         st.dataframe(df_show, use_container_width=True)
-
 
 # ------------------------------
 # Carregamento de dados
@@ -892,7 +884,6 @@ colH.metric("Passageiros por veículo", fmt_float(pax_por_veic, 2))
 # Gráficos
 # ------------------------------
 
-
 # ------------------------------
 # Indicadores por motorista
 # ------------------------------
@@ -1012,7 +1003,6 @@ else:
             st.caption("Maior aproveitamento")
             st.info("Sem dados suficientes para o ranking de aproveitamento.")
 
-
 # ------------------------------
 # Motoristas com menores valores (Bottom 20)
 # ------------------------------
@@ -1057,7 +1047,6 @@ with colB5:
         st.caption("Menor aproveitamento")
         st.info("Sem dados suficientes para o ranking de aproveitamento.")
 
-
 # ------------------------------
 # 🔎 Detalhes do motorista (seleção consolidada)
 # ------------------------------
@@ -1074,7 +1063,6 @@ try:
         show_motorista_details(sel_any, df_filtered)
 except Exception as _e:
     pass
-
 
 # ------------------------------
 # IA (Beta)
@@ -1192,7 +1180,6 @@ if ai_anom:
             def _anom_csv(df_in: pd.DataFrame) -> bytes:
                 return df_in.to_csv(index=False, sep=";", decimal=",").encode("utf-8")
             st.download_button("Baixar anomalias (CSV ;)", data=_anom_csv(anomias_df), file_name="anomalias_viagens.csv", mime="text/csv")
-
 
 # ---------- Score de performance de motoristas (ajustado por contexto) ----------
 if ai_perf:
@@ -1861,7 +1848,6 @@ def _first_present(df, names):
 def _to_dt(series):
     return _pd.to_datetime(series, errors="coerce")
 
-
 def _calc_aproveitamento(df):
     """
     Calcula KPIs gerais e tabela por linha de aproveitamento da frota.
@@ -2016,12 +2002,6 @@ try:
 
 except Exception as _e:
     if _st: _st.warning(f"Falha ao renderizar 'Aproveitamento da Frota': {_e}")
-
-
-
-
-
-
 
 # === PAINEL DE SUSPEITAS: GRATUIDADES POR MOTORISTA ===
 import pandas as _pd
@@ -2302,9 +2282,6 @@ except Exception as _e:
     except Exception:
         pass
 
-
-
-
 # === Painel Rotatividade Motoristas x Veículos (injetado) ===
 VEIC_CANDIDATES = [
     "Numero Veiculo"
@@ -2482,9 +2459,6 @@ def show_rotatividade_motoristas_por_veiculo(
     st.download_button("Baixar CSV (rotatividade por veículo)", data=csv, file_name="rotatividade_motoristas_por_veiculo.csv", mime="text/csv")
 # === Fim painel rotatividade ===
 
-
-
-
 # === Chamada do painel de Rotatividade (injetado) ===
 try:
     _df_candidates = [
@@ -2512,11 +2486,6 @@ try:
 except Exception as e:
     st.warning(f"Falha ao renderizar painel de rotatividade: {e}")
 # === Fim chamada painel rotatividade ===
-
-
-
-
-
 
 # === Painel: Linha do tempo de alocação (1 dia) ===
 ALOC_VEIC_CANDS = ["Veículo","VEÍCULO","Veiculo","CARRO","Carro","Prefixo","Placa","VEIC","ID Veículo","ID_Veiculo","ID_Veículo"]
@@ -2611,7 +2580,6 @@ def _build_segments_events(df, vcol, lcol, tcol, day_start, day_end, idle_gap_mi
     if not segdf.empty:
         segdf["Duração (min)"] = (segdf["Fim"] - segdf["Início"]).dt.total_seconds()/60.0
     return segdf
-
 
 def show_linha_do_tempo_alocacao_1dia(
     df,
@@ -2739,8 +2707,6 @@ def show_linha_do_tempo_alocacao_1dia(
     csv = segf.to_csv(index=False).encode("utf-8-sig")
     st.download_button("Baixar CSV da linha do tempo (1 dia)", data=csv, file_name="alocacao_veiculos_1dia.csv", mime="text/csv")
 # === Fim Painel: Linha do tempo de alocação (1 dia) ===
-
-
 
 # === Chamada: Linha do tempo de alocação (1 dia) ===
 # (guarded to evitar NameError se a função não estiver carregada ainda)
