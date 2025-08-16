@@ -2415,7 +2415,7 @@ def show_tabela_horas_motoristas_periodo(df, titulo="🗓️ Tabela de horas por
     limite = 7*60 + 20  # 440
     total_min = piv.sum(axis=1)
     he_min = (piv - limite).clip(lower=0).sum(axis=1)
-    neg_min = (limite - piv).clip(lower=0).sum(axis=1)
+    neg_min = ((dias_trab * limite) - total_min).clip(lower=0)
 
     # Ordenar colunas por data
     piv = piv.reindex(sorted(piv.columns), axis=1)
