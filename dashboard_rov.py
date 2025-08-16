@@ -2429,16 +2429,14 @@ def show_tabela_horas_motoristas_periodo(df, titulo="🗓️ Tabela de horas por
                 colors.append("background-color: #81c784; color: #000")  # verde
         return colors
 
-    sty = final_num.style
-    # aplicar cores só nas colunas de dias
-    sty = sty.apply(color_cells, subset=day_cols, axis=1)
-    # formatar HH:MM nas colunas de dias e totais
-    fmt_cols = day_cols + ["Total (min)", "HE Total (min)", "Horas Negativas (min)"]
-    sty = sty.format(_fmt_hhmm, subset=fmt_cols)
-
-    # Renomear cabeçalhos de dia para dd/mm
+    # Preparar Styler com formatação e cores
     rename_cols = {c: pd.Timestamp(c).strftime("%d/%m") for c in day_cols}
-    sty = sty.relabel_index(lambda x: x, axis=0).relabel_index(lambda c: rename_cols.get(c, c), axis=1)
+    day_cols_ren = [rename_cols.get(c, c) for c in day_cols]
+    display_df = final_num.rename(columns=rename_cols)
+    sty = display_df.style
+    sty = sty.apply(color_cells, subset=day_cols_ren, axis=1)
+    fmt_cols = day_cols_ren + ["Total (min)", "HE Total (min)", "Horas Negativas (min)"]
+    sty = sty.format(_fmt_hhmm, subset=fmt_cols)
 
     st.markdown("#### Tabela de horas (cores: vermelho >07:20, amarelo <06:00, verde entre 06:00–07:20)")
     st.write(sty)
