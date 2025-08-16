@@ -2699,7 +2699,7 @@ def show_linha_do_tempo_alocacao_1dia(
         return
 
     # Flag de zero passageiros (apenas não-ocioso)
-    import pandas as pd as _pd  # local alias only for to_numeric
+    import pandas as _pd  # local alias only for to_numeric
     segf["ZeroPass"] = (segf["Linha"].astype(str) != "Ocioso") & (_pd.to_numeric(segf["Passageiros"], errors="coerce").fillna(-1) == 0)
 
     # Gráfico timeline (Veículo categórico) + destaque ZeroPass com pattern
