@@ -1576,7 +1576,7 @@ if "Nome Linha" in df_filtered.columns:
     veic_cfg_med_tbl  = grp["Veiculos_cfg"].mean(numeric_only=True) if "Veiculos_cfg" in base_tbl.columns else pd.Series(0.0, index=grp.size().index)
     veic_ids_uni_tbl  = grp["Numero Veiculo"].nunique() if "Numero Veiculo" in base_tbl.columns else pd.Series(0, index=grp.size().index)
     km_rodado_tbl     = grp[dist_col_tbl].sum(numeric_only=True)
-    pax_total_tbl     = grp["_TotPass"].sum(numeric_only=True).index)
+    pax_total_tbl     = grp["_TotPass"].sum(numeric_only=True)
     viagens_total_tbl = grp.size()
     grat_tbl          = grp["Quant Gratuidade"].sum(numeric_only=True) if "Quant Gratuidade" in base_tbl.columns else pd.Series(0.0, index=grp.size().index)
 
