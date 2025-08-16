@@ -1573,12 +1573,12 @@ if "Nome Linha" in df_filtered.columns:
         dist_col_tbl = "__dist__"
     grp = base_tbl.groupby("Nome Linha", observed=False)
 
-    veic_cfg_med_tbl  = grp["Veiculos_cfg"].mean(numeric_only=True) if "Veiculos_cfg" in base_tbl.columns else pd.Series(0.0, index=grp.size().index)
-    veic_ids_uni_tbl  = grp["Numero Veiculo"].nunique() if "Numero Veiculo" in base_tbl.columns else pd.Series(0, index=grp.size().index)
+    veic_cfg_med_tbl  = grp["Veiculos_cfg"].mean(numeric_only=True) if "Veiculos_cfg" in base_tbl.columns else pd.Series(0.0, index=grp.size()
+    veic_ids_uni_tbl  = grp["Numero Veiculo"].nunique() if "Numero Veiculo" in base_tbl.columns else pd.Series(0, index=grp.size()
     km_rodado_tbl     = grp[dist_col_tbl].sum(numeric_only=True)
     pax_total_tbl     = grp["_TotPass"].sum(numeric_only=True)
     viagens_total_tbl = grp.size()
-    grat_tbl          = grp["Quant Gratuidade"].sum(numeric_only=True) if "Quant Gratuidade" in base_tbl.columns else pd.Series(0.0, index=grp.size().index)
+    grat_tbl          = grp["Quant Gratuidade"].sum(numeric_only=True) if "Quant Gratuidade" in base_tbl.columns else pd.Series(0.0, index=grp.size()
 
     # Colunas de pagantes (inclui integrações) + fallback por regex
     paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
@@ -1597,7 +1597,7 @@ if "Nome Linha" in df_filtered.columns:
         pag_by_cols_tbl = grp[candidate_cols].sum(numeric_only=True)
         pagantes_tbl = pag_by_cols_tbl.sum(axis=1)
     else:
-        pagantes_tbl = pd.Series(0.0, index=grp.size().index)
+        pagantes_tbl = pd.Series(0.0, index=grp.size()
     receita_tar_l_tbl = pagantes_tbl * float(tarifa_usuario)
     subsidio_l_tbl    = pagantes_tbl * float(subsidio_pagante)
     receita_tot_l_tbl = receita_tar_l_tbl + subsidio_l_tbl
@@ -1765,10 +1765,10 @@ if ai_cluster:
                 dcol = "__km__"
             # Totais por linha
             grp = base.groupby("Nome Linha", observed=False)
-            total_pax = grp["_TotPass"].sum(numeric_only=True).index)
+            total_pax = grp["_TotPass"].sum(numeric_only=True)
             total_km  = grp[dcol].sum(numeric_only=True)
             viagens   = grp.size()
-            grat      = grp["Quant Gratuidade"].sum(numeric_only=True) if "Quant Gratuidade" in base.columns else pd.Series(0, index=grp.size().index)
+            grat      = grp["Quant Gratuidade"].sum(numeric_only=True) if "Quant Gratuidade" in base.columns else pd.Series(0, index=grp.size()
 
             paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
             present_paying_c = [c for c in paying_cols_all if c in base.columns]
@@ -1776,7 +1776,7 @@ if ai_cluster:
                 pag_df = grp[present_paying_c].sum(numeric_only=True)
                 pag = pag_df.sum(axis=1)
             else:
-                pag = pd.Series(0.0, index=grp.size().index)
+                pag = pd.Series(0.0, index=grp.size()
 
             receita = pag * (float(tarifa_usuario) + float(subsidio_pagante))
 
