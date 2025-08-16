@@ -2590,6 +2590,33 @@ def show_linha_do_tempo_alocacao_1dia(
     from datetime import date as _date
 
     # Colunas fixas conforme solicitado
+    # Candidatos para total e componentes
+    CAND_PASS_TOTAL = ["Passageiros","Qtd Passageiros","Qtde Passageiros","Quantidade Passageiros","Total Passageiros","Passageiros Transportados","Qtd de Passageiros","Quantidade de Passageiros"]
+    CAND_PAGANTES   = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte","Pagantes","Quantidade Pagantes","Qtd Pagantes","Qtde Pagantes","Validações","Validacoes","Validacao","Validação","Embarques","Embarcados"]
+    CAND_GRAT       = ["Quant Gratuidade","Qtd Gratuidade","Qtde Gratuidade","Gratuidades","Gratuidade","Quantidade Gratuidade"]
+
+    def _num_from_row(row, cols):
+        import pandas as pd
+        total = 0.0
+        for c in cols:
+            if c in row.index:
+                v = pd.to_numeric(pd.Series([row[c]]), errors="coerce").iloc[0]
+                if pd.notna(v):
+                    total += float(v)
+        return float(total)
+
+    def _passageiros_row(row):
+        # 1) Se existir uma coluna de total direta, usa a primeira que aparecer
+        for c in CAND_PASS_TOTAL:
+            if c in row.index:
+                import pandas as pd
+                v = pd.to_numeric(pd.Series([row[c]]), errors="coerce").iloc[0]
+                return 0.0 if pd.isna(v) else float(v)
+        # 2) Caso contrário, soma pagantes + gratuidades conforme disponíveis
+        pag = _num_from_row(row, CAND_PAGANTES)
+        grat = _num_from_row(row, CAND_GRAT)
+        return float(pag + grat)
+
     
     vcol = "Numero Veiculo"
     lcol = "Nome Linha"
@@ -2640,11 +2667,7 @@ def show_linha_do_tempo_alocacao_1dia(
         e_clip = min(e, day_end)
         if s_clip >= e_clip:
             continue
-        segs.append({"Veículo": str(r[vcol]), "Linha": str(r[lcol]), "Início": s_clip, "Fim": e_clip, "Passageiros": float(pd.to_numeric(r.get("Quant Inteiras",0), errors="coerce") or 0)
-                    + float(pd.to_numeric(r.get("Quant Passagem",0), errors="coerce") or 0)
-                    + float(pd.to_numeric(r.get("Quant Passe",0), errors="coerce") or 0)
-                    + float(pd.to_numeric(r.get("Quant Vale Transporte",0), errors="coerce") or 0)
-                    + float(pd.to_numeric(r.get("Quant Gratuidade",0), errors="coerce") or 0)})
+        segs.append({"Veículo": str(r[vcol]), "Linha": str(r[lcol]), "Início": s_clip, "Fim": e_clip, "Passageiros": _passageiros_row(r)})
 
     seg = pd.DataFrame(segs)
     if seg.empty:
@@ -2668,6 +2691,7 @@ def show_linha_do_tempo_alocacao_1dia(
     seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
     # Flag de viagens com zero passageiros (apenas para segmentos não-ociosos)
     if "Passageiros" in seg.columns:
+        import pandas as pd
         seg["ZeroPass"] = (seg["Linha"].astype(str) != "Ocioso") & (pd.to_numeric(seg["Passageiros"], errors="coerce").fillna(-1) == 0)
     else:
         seg["ZeroPass"] = False
