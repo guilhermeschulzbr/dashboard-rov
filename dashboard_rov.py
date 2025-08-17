@@ -28,7 +28,7 @@ def debug_guard(fn):
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
-            _log_debug(tb)
+            (_log_debug if "_log_debug" in globals() else (lambda *a, **k: None))(tb)
             try:
                 import streamlit as st
                 if _is_debug_enabled():
