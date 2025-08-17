@@ -929,6 +929,7 @@ integration_cols_all = ["Quant Passagem Integracao","Quant Passe Integracao","Qu
 present_paying = [c for c in paying_cols_all if c in df_filtered.columns]
 present_integration = [c for c in integration_cols_all if c in df_filtered.columns]
 
+# Totais no período filtrado (mantidos para compatibilidade/uso geral)
 total_pagantes = float(df_filtered[present_paying].sum().sum()) if present_paying else 0.0
 total_integracoes = float(df_filtered[present_integration].sum().sum()) if present_integration else 0.0
 total_gratuidade = float(df_filtered["Quant Gratuidade"].sum()) if "Quant Gratuidade" in df_filtered.columns else 0.0
@@ -937,19 +938,109 @@ receita_tarifaria = total_pagantes * float(tarifa_usuario)
 subsidio_total = total_pagantes * float(subsidio_pagante)
 receita_total = receita_tarifaria + subsidio_total
 
-pax_total_calc = float(total_pax) if pd.notna(total_pax) else 0.0
+# Base para custo público/pax (mantém a mesma lógica do código original)
+pax_total_calc = float(total_pax) if 'total_pax' in globals() and pd.notna(total_pax) else (float(df_filtered["Passageiros"].sum()) if "Passageiros" in df_filtered.columns else 0.0)
 custo_publico_por_pax_total = (subsidio_total / pax_total_calc) if pax_total_calc > 0 else 0.0
+
+# ===== Tendências (metade mais recente vs metade anterior) =====
+def _fin_find_time_col(df):
+    candidates = ["Data","data","Date","date","Data Viagem","Data de Viagem",
+                  "DataHoraSaida","DataHoraChegada","DataHora","Datetime","timestamp","Timestamp",
+                  "Hora Saida","Hora"]
+    for c in candidates:
+        if c in df.columns:
+            return c
+    for c in df.columns:
+        if str(df[c].dtype).startswith("datetime"):
+            return c
+    return None
+
+def _fin_split_cur_prev(df):
+    if df is None or len(df) == 0:
+        return df, df
+    col_time = _fin_find_time_col(df)
+    if col_time is not None:
+        s = pd.to_datetime(df[col_time], errors="coerce")
+        df2 = df.copy()
+        df2[col_time] = s
+        df2 = df2.dropna(subset=[col_time]).sort_values(col_time)
+        if len(df2) == 0:
+            mid = len(df)//2
+            return df.iloc[mid:], df.iloc[:mid]
+        days = df2[col_time].dt.floor("D").unique()
+        if len(days) < 2:
+            mid = len(df2)//2
+            return df2.iloc[mid:], df2.iloc[:mid]
+        n = len(days)
+        cut = n // 2
+        prev_days = set(days[:cut])
+        cur_days = set(days[cut:])
+        prev_df = df2[df2[col_time].dt.floor("D").isin(prev_days)]
+        cur_df = df2[df2[col_time].dt.floor("D").isin(cur_days)]
+        return (cur_df if len(cur_df) else df2.iloc[cut:],
+                prev_df if len(prev_df) else df2.iloc[:cut])
+    mid = len(df)//2
+    return df.iloc[mid:], df.iloc[:mid]
+
+def _fin_fmt_delta(val, kind="int", decimals=2):
+    try:
+        if kind == "int":
+            return f"{int(round(val)):+d}"
+        else:
+            return f"{val:+.{decimals}f}"
+    except Exception:
+        return "0"
+
+_fin_cur, _fin_prev = _fin_split_cur_prev(df_filtered)
+
+# Colunas presentes em cada metade
+present_paying_cur = [c for c in paying_cols_all if c in _fin_cur.columns]
+present_integration_cur = [c for c in integration_cols_all if c in _fin_cur.columns]
+present_paying_prev = [c for c in paying_cols_all if c in _fin_prev.columns]
+present_integration_prev = [c for c in integration_cols_all if c in _fin_prev.columns]
+
+# Cálculos por metade
+total_pagantes_cur = float(_fin_cur[present_paying_cur].sum().sum()) if present_paying_cur else 0.0
+total_integracoes_cur = float(_fin_cur[present_integration_cur].sum().sum()) if present_integration_cur else 0.0
+total_gratuidade_cur = float(_fin_cur["Quant Gratuidade"].sum()) if "Quant Gratuidade" in _fin_cur.columns else 0.0
+
+total_pagantes_prev = float(_fin_prev[present_paying_prev].sum().sum()) if present_paying_prev else 0.0
+total_integracoes_prev = float(_fin_prev[present_integration_prev].sum().sum()) if present_integration_prev else 0.0
+total_gratuidade_prev = float(_fin_prev["Quant Gratuidade"].sum()) if "Quant Gratuidade" in _fin_prev.columns else 0.0
+
+# Receitas por metade
+receita_tarifaria_cur = total_pagantes_cur * float(tarifa_usuario)
+subsidio_total_cur   = total_pagantes_cur * float(subsidio_pagante)
+receita_total_cur    = receita_tarifaria_cur + subsidio_total_cur
+
+receita_tarifaria_prev = total_pagantes_prev * float(tarifa_usuario)
+subsidio_total_prev   = total_pagantes_prev * float(subsidio_pagante)
+receita_total_prev    = receita_tarifaria_prev + subsidio_total_prev
+
+# Custo público/pax por metade
+pax_total_cur = float(_fin_cur["Passageiros"].sum()) if "Passageiros" in _fin_cur.columns else 0.0
+pax_total_prev = float(_fin_prev["Passageiros"].sum()) if "Passageiros" in _fin_prev.columns else 0.0
+custo_pub_pax_cur = (subsidio_total_cur / pax_total_cur) if pax_total_cur > 0 else 0.0
+custo_pub_pax_prev = (subsidio_total_prev / pax_total_prev) if pax_total_prev > 0 else 0.0
+
+# Deltas
+_delta_pagantes = total_pagantes_cur - total_pagantes_prev
+_delta_integracoes = total_integracoes_cur - total_integracoes_prev
+_delta_gratuidade = total_gratuidade_cur - total_gratuidade_prev
+_delta_rec_tarif = receita_tarifaria_cur - receita_tarifaria_prev
+_delta_subsidio = subsidio_total_cur - subsidio_total_prev
+_delta_custo_pub_pax = custo_pub_pax_cur - custo_pub_pax_prev
+_delta_rec_total = receita_total_cur - receita_total_prev
 
 st.subheader("💰 Indicadores financeiros (parâmetros na barra lateral)")
 fin_cols = st.columns(7)
-fin_cols[0].metric("Pagantes", fmt_int(total_pagantes))
-fin_cols[1].metric("Integrações (sem custo)", fmt_int(total_integracoes))
-fin_cols[2].metric("Gratuidades", fmt_int(total_gratuidade))
-fin_cols[3].metric("Receita tarifária", fmt_currency(receita_tarifaria, 2))
-fin_cols[4].metric("Subsídio total", fmt_currency(subsidio_total, 2))
-fin_cols[5].metric("Custo público/pax", fmt_currency(custo_publico_por_pax_total, 2))
-fin_cols[6].metric("Receita total", fmt_currency(receita_total, 2))
-
+fin_cols[0].metric("Pagantes", fmt_int(total_pagantes), delta=_fin_fmt_delta(_delta_pagantes, "int"), delta_color="normal")
+fin_cols[1].metric("Integrações (sem custo)", fmt_int(total_integracoes), delta=_fin_fmt_delta(_delta_integracoes, "int"), delta_color="normal")
+fin_cols[2].metric("Gratuidades", fmt_int(total_gratuidade), delta=_fin_fmt_delta(_delta_gratuidade, "int"), delta_color="normal")
+fin_cols[3].metric("Receita tarifária", fmt_currency(receita_tarifaria, 2), delta=_fin_fmt_delta(_delta_rec_tarif, "float", 2), delta_color="normal")
+fin_cols[4].metric("Subsídio total", fmt_currency(subsidio_total, 2), delta=_fin_fmt_delta(_delta_subsidio, "float", 2), delta_color="normal")
+fin_cols[5].metric("Custo público/pax", fmt_currency(custo_publico_por_pax_total, 2), delta=_fin_fmt_delta(_delta_custo_pub_pax, "float", 2), delta_color="normal")
+fin_cols[6].metric("Receita total", fmt_currency(receita_total, 2), delta=_fin_fmt_delta(_delta_rec_total, "float", 2), delta_color="normal")
 # ---------- NOVOS INDICADORES ----------
 # IPK (passageiros por km)
 ipk_total    = (total_pax / dist_total)     if dist_total and dist_total > 0 else 0.0
