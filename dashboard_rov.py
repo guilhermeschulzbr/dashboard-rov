@@ -1589,25 +1589,34 @@ if "Nome Linha" in df_filtered.columns:
     giro_veic_tbl      = veic_ids_uni_tbl / veic_cfg_med_tbl.replace(0, np.nan)  # % de giro
 
     tabela = pd.DataFrame({
-        "Veículos Conf.": veic_cfg_med_tbl,
-        "Veículos (IDs Distintos)": veic_ids_uni_tbl,
-        "% Giro de Veículos": giro_veic_tbl,
-        "Km Rodada": km_rodado_tbl,
-        "Pass. Transp.": pax_total_tbl,
-        "Pass. Grat.": grat_tbl,
-        "Pass. Pag.": pagantes_tbl,
-        "% Grat. s/ Pag.": pct_grat_s_pag_tbl,
-        "IPK Total": ipk_total_l_tbl,
-        "IPK Pag.": ipk_pag_l_tbl,
-        "R$ Rec. p/ Veic. Conf.": rec_por_veic_tbl,
-        "R$ Rec. p/ Pass Tot.": rec_por_pax_tbl,
-        "R$ Rec. p/ Km rodado": rec_por_km_tbl,
-        "Pass. Tot. p/ Viagem": pax_tot_viag_tbl,
-        "Pass. Pag. p/ Viagem": pag_viag_tbl,
-        "R$ Receita Total": receita_tot_l_tbl,
-        "Tot. Viagens": viagens_total_tbl,
-        "Viagens p/ Veic": (viagens_total_tbl / veic_ids_uni_tbl.replace(0, np.nan)),
-    }).reset_index().rename(columns={"Nome Linha":"Nome Linha"})
+    # Frota & operação
+    "Veículos Conf.": veic_cfg_med_tbl,
+    "Veículos (IDs Distintos)": veic_ids_uni_tbl,
+    "% Giro de Veículos": giro_veic_tbl,
+    "Tot. Viagens": viagens_total_tbl,
+    "Viagens p/ Veic": (viagens_total_tbl / veic_ids_uni_tbl.replace(0, np.nan)),
+
+    # Produção
+    "Km Rodada": km_rodado_tbl,
+
+    # Demanda
+    "Pass. Transp.": pax_total_tbl,
+    "Pass. Grat.": grat_tbl,
+    "Pass. Pag.": pagantes_tbl,
+    "% Grat. s/ Pag.": pct_grat_s_pag_tbl,
+    "Pass. Tot. p/ Viagem": pax_tot_viag_tbl,
+    "Pass. Pag. p/ Viagem": pag_viag_tbl,
+
+    # Produtividade
+    "IPK Total": ipk_total_l_tbl,
+    "IPK Pag.": ipk_pag_l_tbl,
+
+    # Receita
+    "R$ Receita Total": receita_tot_l_tbl,
+    "R$ Rec. p/ Km rodado": rec_por_km_tbl,
+    "R$ Rec. p/ Pass Tot.": rec_por_pax_tbl,
+    "R$ Rec. p/ Veic. Conf.": rec_por_veic_tbl,
+}).reset_index().rename(columns={"Nome Linha":"Nome Linha"})
 
     # ===== Totalização =====
     total_veic_cfg_sum   = veic_cfg_med_tbl.sum(skipna=True)
