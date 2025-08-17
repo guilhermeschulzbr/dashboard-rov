@@ -774,32 +774,141 @@ subsidio_pagante = st.sidebar.number_input("Subsídio por pagante (R$)", min_val
 # ------------------------------
 kpi_cols = st.columns(6)
 
-# Passageiros total
-total_pax = df_filtered["Passageiros"].sum() if "Passageiros" in df_filtered.columns else 0
-kpi_cols[0].metric("👥 Passageiros", fmt_int(total_pax))
+# === Helpers para tendência ===
+def _find_time_col(df):
+    # tenta detectar uma coluna temporal comum
+    candidates = [
+        "Data", "data", "Date", "date",
+        "Data Viagem", "Data de Viagem",
+        "DataHoraSaida", "DataHoraChegada", "DataHora", "Datetime", "timestamp", "Timestamp",
+        "Hora Saida", "Hora"
+    ]
+    for c in candidates:
+        if c in df.columns:
+            return c
+    # fallback: primeira coluna do tipo datetime
+    for c in df.columns:
+        if str(df[c].dtype).startswith("datetime"):
+            return c
+    return None
 
-# Viagens registradas
-viagens = len(df_filtered)
-kpi_cols[1].metric("🧭 Viagens registradas", fmt_int(viagens))
+def _split_cur_prev(df):
+    """Divide o df filtrado em 'atual' (metade mais recente) e 'anterior' (metade mais antiga).
+    Se não houver coluna temporal, divide por índice (metade/metade)."""
+    if df is None or len(df) == 0:
+        return df, df
+    col_time = _find_time_col(df)
+    if col_time is not None:
+        s = df[col_time]
+        try:
+            s = pd.to_datetime(s, errors="coerce")
+        except Exception:
+            s = pd.to_datetime(df[col_time], errors="coerce")
+        df_sorted = df.copy()
+        df_sorted[col_time] = s
+        df_sorted = df_sorted.dropna(subset=[col_time]).sort_values(col_time)
+        if len(df_sorted) == 0:
+            # volta para split por índice
+            mid = len(df)//2
+            return df.iloc[mid:], df.iloc[:mid]
+        days = df_sorted[col_time].dt.floor("D").unique()
+        if len(days) < 2:
+            # pouco período: usa split por índice
+            mid = len(df_sorted)//2
+            return df_sorted.iloc[mid:], df_sorted.iloc[:mid]
+        # divide por dias: metade mais recente = atual
+        n = len(days)
+        cut = n // 2
+        prev_days = set(days[:cut])
+        cur_days = set(days[cut:])
+        prev_df = df_sorted[df_sorted[col_time].dt.floor("D").isin(prev_days)]
+        cur_df = df_sorted[df_sorted[col_time].dt.floor("D").isin(cur_days)]
+        return (cur_df if len(cur_df) else df_sorted.iloc[cut:],
+                prev_df if len(prev_df) else df_sorted.iloc[:cut])
+    # fallback por índice
+    mid = len(df)//2
+    return df.iloc[mid:], df.iloc[:mid]
 
-# Distância total (usa distância configurada quando existir)
-if "Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any():
-    dist_total = df_filtered["Distancia_cfg_km"].sum(min_count=1)
+def _fmt_delta(val, kind="int", decimals=1):
+    try:
+        if kind == "int":
+            return f"{int(round(val)):+d}"
+        else:
+            return f"{val:+.{decimals}f}"
+    except Exception:
+        return "0"
+
+# Calcula dataframes atual x anterior com base no df filtrado
+_cur, _prev = _split_cur_prev(df_filtered)
+
+# --- Passageiros total ---
+total_pax_cur = _cur["Passageiros"].sum() if "Passageiros" in _cur.columns else 0
+total_pax_prev = _prev["Passageiros"].sum() if "Passageiros" in _prev.columns else 0
+kpi_cols[0].metric(
+    "👥 Passageiros",
+    fmt_int(total_pax_cur),
+    delta=_fmt_delta(total_pax_cur - total_pax_prev, "int"),
+    delta_color="normal"
+)
+
+# --- Viagens registradas ---
+viagens_cur = len(_cur)
+viagens_prev = len(_prev)
+kpi_cols[1].metric(
+    "🧭 Viagens registradas",
+    fmt_int(viagens_cur),
+    delta=_fmt_delta(viagens_cur - viagens_prev, "int"),
+    delta_color="normal"
+)
+
+# --- Distância total (usa distância configurada quando existir) ---
+if "Distancia_cfg_km" in _cur.columns and _cur["Distancia_cfg_km"].notna().any():
+    dist_total_cur = _cur["Distancia_cfg_km"].sum(min_count=1)
 else:
-    dist_total = df_filtered["Distancia"].sum() if "Distancia" in df_filtered.columns else 0.0
-kpi_cols[2].metric("🛣️ Distância total (km)", fmt_float(dist_total, 1))
+    dist_total_cur = _cur["Distancia"].sum() if "Distancia" in _cur.columns else 0.0
 
-# Média pax/viagem
-media_pax = (total_pax / viagens) if viagens > 0 else 0.0
-kpi_cols[3].metric("📈 Média pax/viagem", fmt_float(media_pax, 2))
+if "Distancia_cfg_km" in _prev.columns and _prev["Distancia_cfg_km"].notna().any():
+    dist_total_prev = _prev["Distancia_cfg_km"].sum(min_count=1)
+else:
+    dist_total_prev = _prev["Distancia"].sum() if "Distancia" in _prev.columns else 0.0
 
-# Veículos (IDs distintos na base filtrada)
-veics_ids = df_filtered["Numero Veiculo"].nunique() if "Numero Veiculo" in df_filtered.columns else 0
-kpi_cols[4].metric("🚌 Veículos (IDs distintos)", fmt_int(veics_ids))
+kpi_cols[2].metric(
+    "🛣️ Distância total (km)",
+    fmt_float(dist_total_cur, 1),
+    delta=_fmt_delta(dist_total_cur - dist_total_prev, "float", decimals=1),
+    delta_color="normal"
+)
 
-# Linhas ativas
-linhas_ativas = df_filtered["Nome Linha"].nunique() if "Nome Linha" in df_filtered.columns else 0
-kpi_cols[5].metric("🧵 Linhas ativas", fmt_int(linhas_ativas))
+# --- Média pax/viagem ---
+media_pax_cur = (total_pax_cur / viagens_cur) if viagens_cur > 0 else 0.0
+media_pax_prev = (total_pax_prev / viagens_prev) if viagens_prev > 0 else 0.0
+kpi_cols[3].metric(
+    "📈 Média pax/viagem",
+    fmt_float(media_pax_cur, 2),
+    delta=_fmt_delta(media_pax_cur - media_pax_prev, "float", decimals=2),
+    delta_color="normal"
+)
+
+# --- Veículos (IDs distintos) ---
+veics_ids_cur = _cur["Numero Veiculo"].nunique() if "Numero Veiculo" in _cur.columns else 0
+veics_ids_prev = _prev["Numero Veiculo"].nunique() if "Numero Veiculo" in _prev.columns else 0
+kpi_cols[4].metric(
+    "🚌 Veículos (IDs distintos)",
+    fmt_int(veics_ids_cur),
+    delta=_fmt_delta(veics_ids_cur - veics_ids_prev, "int"),
+    delta_color="normal"
+)
+
+# --- Linhas ativas ---
+linhas_ativas_cur = _cur["Nome Linha"].nunique() if "Nome Linha" in _cur.columns else 0
+linhas_ativas_prev = _prev["Nome Linha"].nunique() if "Nome Linha" in _prev.columns else 0
+kpi_cols[5].metric(
+    "🧵 Linhas ativas",
+    fmt_int(linhas_ativas_cur),
+    delta=_fmt_delta(linhas_ativas_cur - linhas_ativas_prev, "int"),
+    delta_color="normal"
+)
+)
 
 # --- Financeiro (com base nas colunas existentes) ---
 paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
