@@ -1,3 +1,20 @@
+# ========================
+# CONFIGURAÇÕES CENTRAIS
+# ========================
+# Observação: bloco não quebra nada existente; serve de referência única.
+REF_HOURS_DEFAULT = 7 + 20/60  # 7h20 em horas decimais
+SUSPEITAS_MIN_TRIPS = 10
+SUSPEITAS_MIN_PAGANTES = 100
+TARIFA_USUARIO_PADRAO = 0.0
+SUBSIDIO_PAGANTE_PADRAO = 0.0
+# Mapeamentos de possíveis nomes de colunas (apenas referência; a lógica existente continua válida)
+POSSIVEIS_COLS_MOTORISTA = [
+    "Motorista", "Nome Motorista", "Motorista Nome", "matricula_motorista", "Matricula Motorista",
+]
+POSSIVEIS_COLS_INICIO = ["Data Hora Inicio Operacao", "DataHoraInicio", "Início Viagem"]
+POSSIVEIS_COLS_FIM    = ["Data Hora Final Operacao", "DataHoraFim", "Fim Viagem"]
+# ========================
+
 # -*- coding: utf-8 -*-
 # ============================================================
 # Dashboard Operacional ROV (apenas com dados do arquivo)
@@ -209,7 +226,7 @@ def show_motorista_details(motorista_id: str, df_scope: pd.DataFrame):
         fig3 = px.scatter(dfm, x="Hora_Base", y="Passageiros", title="Demanda por hora (motorista)",
                           hover_data=[c for c in ["Nome Linha","Descricao Terminal","Data Coleta"] if c in dfm.columns])
         fig3.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=320)
-        st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(apply_plotly_theme(fig3), use_container_width=True)
 
     # Tabela detalhada (amostra)
     cols_show = [c for c in ["Data Coleta","Nome Linha","Numero Veiculo","Descricao Terminal","Passageiros", dist_col, "Quant Gratuidade"] if c and c in dfm.columns]
@@ -930,7 +947,7 @@ else:
         aproveitamento_pct = pd.Series(dtype=float)
 
     # KPIs médios por motorista (sobre o conjunto filtrado)
-    n_motoristas = len(viagens_m.index)
+    n_motoristas = int(df_filtered[motorista_col].dropna().nunique()) if motorista_col and motorista_col in df_filtered.columns else 0
     k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("Motoristas distintos", fmt_int(n_motoristas))
     k2.metric("Média de viagens/motorista", fmt_float((viagens / n_motoristas) if n_motoristas else 0, 2))
@@ -1147,7 +1164,7 @@ if ai_anom:
                 })
                 fig = px.scatter(graf, x="x", y="Passageiros", color="anom", title="Anomalias: Passageiros vs " + ("Distância (km)" if xcol==dist_col_x else "Duração (min)"))
                 fig.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=380, legend_title_text="Anômalo?")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
 
             st.caption("Top anomalias (ordenadas por severidade)")
             cols_show = [c for c in ["Data Coleta","Nome Linha","Numero Veiculo","Descricao Terminal","Passageiros"] if c in anomias_df.columns]
@@ -1290,7 +1307,7 @@ if ai_perf:
                             import plotly.express as _px
                             try:
                                 figh = _px.histogram(dfm, x="resid", nbins=30, title="Distribuição dos resíduos (real - previsto)")
-                                st.plotly_chart(figh, use_container_width=True)
+                                st.plotly_chart(apply_plotly_theme(figh), use_container_width=True)
                             except Exception:
                                 pass
                 except Exception as e:
@@ -1350,7 +1367,7 @@ if ai_fore:
                         figf.add_scatter(x=fc_vis["ds"], y=fc_vis["yhat_lower"], mode="lines", name="limite inferior", line=dict(dash="dot"))
                         figf.update_xaxes(tickformat="%d/%m/%Y")
                         figf.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=380)
-                        st.plotly_chart(figf, use_container_width=True)
+                        st.plotly_chart(apply_plotly_theme(figf), use_container_width=True)
 
                         # KPIs de insight
                         cA, cB = st.columns(2)
@@ -1365,7 +1382,7 @@ if {"Data", "Passageiros"}.issubset(df_filtered.columns) and df_filtered["Data"]
     fig = px.line(serie, x="Data", y="Passageiros", markers=True, title="Passageiros por dia")
     fig.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=350)
     fig.update_xaxes(tickformat="%d/%m/%Y")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
 else:
     st.info("Sem dados de 'Data Coleta' e 'Passageiros' suficientes para a série temporal.")
 
@@ -1381,7 +1398,7 @@ with left:
         rank_fmt["Passageiros"] = rank_fmt["Passageiros"].apply(fmt_int)
         fig = px.bar(rank, x="Nome Linha", y="Passageiros", title="Top 15 linhas por passageiros")
         fig.update_layout(xaxis_tickangle=-30, margin=dict(l=10,r=10,t=35,b=10), height=380)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
         st.caption("Tabela (formatada)")
         st.dataframe(rank_fmt.head(50))
     else:
@@ -1398,7 +1415,7 @@ with right:
         if not totais.empty:
             fig = px.pie(totais, names="Tipo", values="Quantidade", hole=0.45, title="Participação por tipo")
             fig.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=380)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
         else:
             st.info("As colunas de tarifa existem, mas não há valores positivos no filtro atual.")
     else:
@@ -1423,7 +1440,7 @@ if x_col and {x_col, "Passageiros"}.issubset(df_filtered.columns) and df_filtere
         **trendline_kw
     )
     fig.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=380)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
 else:
     st.info("Sem dados suficientes para plotar distância x passageiros.")
 
@@ -1448,7 +1465,7 @@ if {"Hora_Base","DiaSemana_Base","Passageiros"}.issubset(df_filtered.columns) an
             histfunc="avg", nbinsx=24, title="Heatmap de demanda (hora x dia)"
         )
         fig.update_layout(margin=dict(l=10, r=10, t=35, b=10), height=380)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
     else:
         st.info("Não há dados suficientes para o heatmap no filtro atual.")
 else:
@@ -1801,7 +1818,7 @@ if ai_cluster:
                     size="Rec_por_km", title="Clusters de linhas (tamanho ~ Receita por Km)"
                 )
                 figc.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=420)
-                st.plotly_chart(figc, use_container_width=True)
+                st.plotly_chart(apply_plotly_theme(figc), use_container_width=True)
 
                 st.caption("Linhas por cluster (com métricas)")
                 show_cols = ["Nome Linha","Cluster","Perfil","IPK_total","Pct_grat_s_pag","Km_medio_viagem","Rec_por_km","Veic_cfg_med","Viagens"]
@@ -1935,7 +1952,7 @@ def _calc_aproveitamento(df):
 
 # ---- Renderização na UI ----
 try:
-    _base_df = df_filtered.copy() if 'df_filtered' in globals() else df.copy()
+    _base_df = df_filtered.copy() if globals().get('df_filtered') is not None else df.copy()
 
     # Helpers de formatação
     def _fmt_h(v, dec=1):
@@ -2057,7 +2074,7 @@ def _robust_baseline(series):
     madn = 1.4826 * mad if (mad is not None and mad > 0) else _np.nan
     return med, madn
 
-def _sus_compute_table(df, min_trips=10, min_pag=100, baseline="linha"):
+def _sus_compute_table(df, min_trips=SUSPEITAS_MIN_TRIPS, min_pag=SUSPEITAS_MIN_PAGANTES, baseline="linha"):
     if df is None or df.empty:
         return _pd.DataFrame(), "Sem dados após filtros."
 
@@ -2162,11 +2179,6 @@ def _sus_trip_level(df, selected_driver):
 
     if lin and isinstance(lin, str) and lin in d.columns:
         med = d.groupby(lin)["grat_pag_ratio"].transform(lambda s: _pd.to_numeric(s, errors="coerce").median())
-        def _madn_tr(s):
-            s2 = _pd.to_numeric(s, errors="coerce").dropna()
-            if s2.empty: return _np.nan
-            m = s2.median()
-            return 1.4826 * (s2 - m).abs().median() if _pd.notna(m) else _np.nan
         madn = d.groupby(lin)["grat_pag_ratio"].transform(_madn_tr)
     else:
         med_val, madn_val = _robust_baseline(d["grat_pag_ratio"])
@@ -2176,11 +2188,6 @@ def _sus_trip_level(df, selected_driver):
     denom = madn.replace({0:_np.nan})
     d["z_rob_viagem"] = ( _pd.to_numeric(d["grat_pag_ratio"], errors="coerce") - _pd.to_numeric(med, errors="coerce") ) / denom
 
-    def _lvl(z):
-        if _pd.isna(z): return "inconclusivo"
-        if z >= 3: return "ALTA"
-        if z >= 2: return "MÉDIA"
-        return "BAIXA"
     d["Suspeita (viagem)"] = d["z_rob_viagem"].apply(_lvl)
 
     if ini_col and fim_col and ini_col in d.columns and fim_col in d.columns:
@@ -2209,6 +2216,7 @@ def _sus_trip_level(df, selected_driver):
     out["% grat/pag (viagem)"] = (out["% grat/pag (viagem)"]*100).round(2)
     return out.sort_values(["Suspeita (viagem)","% grat/pag (viagem)"], ascending=[True, False]), None
 
+@debug_guard
 def _render_suspeitas_panel(df):
     if _st is None:
         return
@@ -2220,8 +2228,8 @@ def _render_suspeitas_panel(df):
     )
 
     _st.sidebar.markdown("**Parâmetros de suspeição**")
-    min_trips = int(_st.sidebar.number_input("Mínimo de viagens por motorista", min_value=1, max_value=100, value=10, step=1))
-    min_pag = float(_st.sidebar.number_input("Mínimo de pagantes (sem integr.)", min_value=0.0, max_value=1e6, value=100.0, step=10.0))
+    min_trips = int(_st.sidebar.number_input("Mínimo de viagens por motorista", min_value=SUSPEITAS_MIN_TRIPS, max_value=SUSPEITAS_MIN_TRIPS, value=SUSPEITAS_MIN_TRIPS, step=1))
+    min_pag = float(_st.sidebar.number_input("Mínimo de pagantes (sem integr.)", min_value=SUSPEITAS_MIN_PAGANTES, max_value=SUSPEITAS_MIN_PAGANTESe6, value=SUSPEITAS_MIN_PAGANTES, step=10.0))
     baseline = _st.sidebar.selectbox("Baseline", ["Por linha (recomendado)","Global"], index=0)
     baseline_key = "linha" if baseline.startswith("Por linha") else "global"
     topn = int(_st.sidebar.number_input("Top N por suspeita", min_value=5, max_value=100, value=20, step=5))
@@ -2249,7 +2257,7 @@ def _render_suspeitas_panel(df):
         fig = _go.Figure()
         fig.add_bar(x=x, y=chart["% grat/pag"], marker_color=chart["Cor"], name="% grat/pag")
         fig.update_layout(height=360, margin=dict(l=0,r=0,t=10,b=0), yaxis_title="% grat/pag", xaxis_title="Motorista")
-        _st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        _st.plotly_chart(apply_plotly_theme(fig), use_container_width=True, config={"displayModeBar": False})
     except Exception as _e:
         _st.warning(f"Falha ao desenhar gráfico: {_e}")
 
@@ -2270,7 +2278,7 @@ def _render_suspeitas_panel(df):
     _st.markdown("**Legenda:** 🔴 ALTA (z ≥ 3) • 🟠 MÉDIA (2 ≤ z < 3) • 🟡 BAIXA (0 ≤ z < 2) • ⚪ Inconclusivo (amostra mínima/variância).")
 
 try:
-    _df_base = df_filtered.copy() if 'df_filtered' in globals() else df.copy()
+    _df_base = df_filtered.copy() if globals().get('df_filtered') is not None else df.copy()
     _render_suspeitas_panel(_df_base)
 except Exception as _e:
     try:
@@ -2434,7 +2442,7 @@ def show_rotatividade_motoristas_por_veiculo(
         fig.update_xaxes(type='category')
         fig.update_traces(textposition="outside", cliponaxis=False)
         fig.update_layout(xaxis_title="Veículo", yaxis_title="Qtde de motoristas", bargap=0.2, height=450)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
     else:
         st.info("Nenhum veículo atende ao filtro atual.")
 
@@ -2464,7 +2472,7 @@ try:
     df_rot = None
     for _name in _df_candidates:
         if _name in globals():
-            _obj = globals()[_name]
+            _obj = globals().get(_name)
             try:
                 import pandas as _pd
                 if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
@@ -2472,7 +2480,7 @@ try:
                     break
             except Exception:
                 pass
-    if df_rot is None and 'df' in globals():
+    if df_rot is None and globals().get('df') is not None:
         df_rot = df
 
     if df_rot is not None:
@@ -2485,6 +2493,7 @@ except Exception as e:
 
 
 # === Painel: Linha do tempo de alocação (1 dia) — COM INDICADORES ===
+@debug_guard
 def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocação (1 dia)"):
     import pandas as pd
     import plotly.express as px
@@ -2595,18 +2604,7 @@ def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocaç
     pax_tot = float(pd.to_numeric(segf.loc[work_mask, "Passageiros"], errors="coerce").fillna(0).sum())
     pph = (pax_tot / (t_work/60.0)) if t_work > 0 else 0.0
 
-    def _fmt_hhmm(m):
-        try:
-            m = int(round(float(m)))
-        except Exception:
-            m = 0
-        return f"{m//60:02d}:{m%60:02d}"
 
-    def _fmt_pct(x):
-        try:
-            return f"{(float(x)*100):.1f}%"
-        except Exception:
-            return "0.0%"
 
     c1,c2,c3,c4,c5 = st.columns(5)
     c1.metric("Veículos (selecionados)", f"{segf['Veículo'].nunique()}")
@@ -2679,7 +2677,7 @@ def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocaç
     )
     fig.update_yaxes(autorange="reversed", type="category")
     fig.update_layout(height=650, xaxis_title="Horário", yaxis_title="Veículo")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
 
     st.markdown("#### Segmentos gerados")
     st.dataframe(segf, use_container_width=True, hide_index=True)
@@ -2690,6 +2688,7 @@ def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocaç
 
 
 # === Painel: Linha do tempo — Motoristas × Linhas (1 dia) — COM INDICADORES ===
+@debug_guard
 def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: Motoristas × Linhas (1 dia)"):
     import pandas as pd
     import plotly.express as px
@@ -2711,26 +2710,7 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
     CAND_PAGANTES   = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte","Pagantes","Quantidade Pagantes","Qtd Pagantes","Qtde Pagantes","Validações","Validacoes","Validacao","Validação","Embarques","Embarcados"]
     CAND_GRAT       = ["Quant Gratuidade","Qtd Gratuidade","Qtde Gratuidade","Gratuidades","Gratuidade","Quantidade Gratuidade"]
 
-    def _num_from_row(row, cols):
-        total = 0.0
-        for c in cols:
-            if c in row.index:
-                try:
-                    v = pd.to_numeric(row[c], errors="coerce")
-                    if pd.notna(v):
-                        total += float(v)
-                except Exception:
-                    pass
-        return float(total)
 
-    def _passageiros_row(row):
-        for c in CAND_PASS_TOTAL:
-            if c in row.index:
-                v = pd.to_numeric(row[c], errors="coerce")
-                return 0.0 if pd.isna(v) else float(v)
-        pag = _num_from_row(row, CAND_PAGANTES)
-        grat = _num_from_row(row, CAND_GRAT)
-        return float(pag + grat)
 
     st.markdown("## " + titulo)
 
@@ -2784,14 +2764,6 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
 
     
     # === Totais por motorista e rótulos com HE ===
-    def _fmt_hhmm(total_min):
-        try:
-            total_min = int(round(float(total_min)))
-        except Exception:
-            total_min = 0
-        h = total_min // 60
-        m = total_min % 60
-        return f"{h:02d}:{m:02d}"
 
     _mask_work = seg["Linha"].astype(str) != "Ocioso"
     # usa a duração já calculada, zerando quando ocioso
@@ -2832,12 +2804,6 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
     avg_work_min = (t_work / mot_count) if mot_count>0 else 0.0
     pph = (pax_tot / (t_work/60.0)) if t_work > 0 else 0.0
 
-    def _fmt_hhmm(m):
-        try:
-            m = int(round(float(m)))
-        except Exception:
-            m = 0
-        return f"{m//60:02d}:{m%60:02d}"
 
     c1,c2,c3,c4,c5 = st.columns(5)
     c1.metric("Motoristas (selecionados)", f"{mot_count}")
@@ -2932,7 +2898,7 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
     )
     fig.update_yaxes(autorange="reversed", type="category")
     fig.update_layout(height=650, xaxis_title="Horário", yaxis_title="Motorista")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
 
     st.markdown("#### Segmentos — Motoristas × Linhas")
     st.dataframe(segf, use_container_width=True, hide_index=True)
@@ -2943,6 +2909,7 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
 
 
 # === Painel: Linha do tempo — Motoristas × Veículos (1 dia) — COM INDICADORES ===
+@debug_guard
 def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo: Motoristas × Veículos (1 dia)"):
     import pandas as pd
     import plotly.express as px
@@ -2963,26 +2930,7 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
     CAND_PAGANTES   = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte","Pagantes","Quantidade Pagantes","Qtd Pagantes","Qtde Pagantes","Validações","Validacoes","Validacao","Validação","Embarques","Embarcados"]
     CAND_GRAT       = ["Quant Gratuidade","Qtd Gratuidade","Qtde Gratuidade","Gratuidades","Gratuidade","Quantidade Gratuidade"]
 
-    def _num_from_row(row, cols):
-        total = 0.0
-        for c in cols:
-            if c in row.index:
-                try:
-                    v = pd.to_numeric(row[c], errors="coerce")
-                    if pd.notna(v):
-                        total += float(v)
-                except Exception:
-                    pass
-        return float(total)
 
-    def _passageiros_row(row):
-        for c in CAND_PASS_TOTAL:
-            if c in row.index:
-                v = pd.to_numeric(row[c], errors="coerce")
-                return 0.0 if pd.isna(v) else float(v)
-        pag = _num_from_row(row, CAND_PAGANTES)
-        grat = _num_from_row(row, CAND_GRAT)
-        return float(pag + grat)
 
     st.markdown("## " + titulo)
 
@@ -3036,14 +2984,6 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
 
     
     # === Totais por motorista e rótulos com HE ===
-    def _fmt_hhmm(total_min):
-        try:
-            total_min = int(round(float(total_min)))
-        except Exception:
-            total_min = 0
-        h = total_min // 60
-        m = total_min % 60
-        return f"{h:02d}:{m:02d}"
 
     _mask_work = seg["Veículo"].astype(str) != "Ocioso"
     # usa a duração já calculada, zerando quando ocioso
@@ -3084,12 +3024,6 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
     avg_work_min = (t_work / mot_count) if mot_count>0 else 0.0
     pph = (pax_tot / (t_work/60.0)) if t_work > 0 else 0.0
 
-    def _fmt_hhmm(m):
-        try:
-            m = int(round(float(m)))
-        except Exception:
-            m = 0
-        return f"{m//60:02d}:{m%60:02d}"
 
     c1,c2,c3,c4,c5 = st.columns(5)
     c1.metric("Motoristas (selecionados)", f"{mot_count}")
@@ -3148,7 +3082,7 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
     )
     fig.update_yaxes(autorange="reversed", type="category")
     fig.update_layout(height=650, xaxis_title="Horário", yaxis_title="Motorista")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
 
     st.markdown("#### Segmentos — Motoristas × Veículos")
     st.dataframe(segf, use_container_width=True, hide_index=True)
@@ -3160,7 +3094,7 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
 
 # === Chamada: Linha do tempo de alocação (1 dia) ===
 try:
-    if 'show_linha_do_tempo_alocacao_1dia' in globals():
+    if callable(globals().get('show_linha_do_tempo_alocacao_1dia')):
         _df_candidates = [
             'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df'
         ]
@@ -3168,7 +3102,7 @@ try:
         df_candidate = None
         for _name in _df_candidates:
             if _name in globals():
-                _obj = globals()[_name]
+                _obj = globals().get(_name)
                 try:
                     import pandas as _pd
                     if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
@@ -3185,7 +3119,7 @@ except Exception as e:
 
 # === Chamada: Timeline Motoristas × Linhas (1 dia) ===
 try:
-    if 'show_linha_do_tempo_motoristas_linhas_1dia' in globals():
+    if callable(globals().get('show_linha_do_tempo_motoristas_linhas_1dia')):
         _df_candidates = [
             'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df'
         ]
@@ -3193,7 +3127,7 @@ try:
         df_candidate = None
         for _name in _df_candidates:
             if _name in globals():
-                _obj = globals()[_name]
+                _obj = globals().get(_name)
                 try:
                     import pandas as _pd
                     if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
@@ -3210,7 +3144,7 @@ except Exception as e:
 
 # === Chamada: Timeline Motoristas × Veículos (1 dia) ===
 try:
-    if 'show_linha_do_tempo_motoristas_veiculos_1dia' in globals():
+    if callable(globals().get('show_linha_do_tempo_motoristas_veiculos_1dia')):
         _df_candidates = [
             'df_scope','df_filtrado','df_filtered','df_periodo','df_period','df_view','df_final','df_result','df_base_filtrado','df'
         ]
@@ -3218,7 +3152,7 @@ try:
         df_candidate = None
         for _name in _df_candidates:
             if _name in globals():
-                _obj = globals()[_name]
+                _obj = globals().get(_name)
                 try:
                     import pandas as _pd
                     if isinstance(_obj, _pd.DataFrame) and not _obj.empty:
@@ -3232,3 +3166,57 @@ try:
 except Exception as e:
     st.warning(f"Falha ao renderizar painel Motoristas × Veículos: {e}")
 # === Fim chamada: Timeline Motoristas × Veículos (1 dia) ===
+
+# ========================
+# HELPERS DE ACESSO GLOBAL (redução de globals())
+# ========================
+def gget(name, default=None):
+    try:
+        return gget(name, default)
+    except Exception:
+        return default
+
+# ========================
+# DEBUG / LOG DE ERROS (opcional)
+# ========================
+def _is_debug_enabled():
+    try:
+        import streamlit as st
+        return bool(st.session_state.get("__DEBUG__", False))
+    except Exception:
+        return False
+
+def _log_debug(msg):
+    try:
+        import streamlit as st
+        logs = st.session_state.get("__DEBUG_LOGS__", [])
+        logs.append(str(msg))
+        st.session_state["__DEBUG_LOGS__"] = logs
+    except Exception:
+        pass
+
+def debug_guard(fn):
+    """Decorator: captura exceções, registra log e mostra rastro se modo debug estiver ativo."""
+    def _wrap(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            _log_debug(tb)
+            try:
+                import streamlit as st
+                if _is_debug_enabled():
+                    st.error("⚠️ Erro ao renderizar este painel.")
+                    st.code(tb)
+            except Exception:
+                pass
+            return None
+    return _wrap
+
+# Ativa o toggle na sidebar (silencioso fora do Streamlit)
+try:
+    import streamlit as _st_dbg
+    _st_dbg.sidebar.checkbox("🔧 Modo debug", key="__DEBUG__", help="Exibe rastros de erro dos painéis.")
+except Exception:
+    pass
