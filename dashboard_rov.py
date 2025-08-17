@@ -908,7 +908,6 @@ kpi_cols[5].metric(
     delta=_fmt_delta(linhas_ativas_cur - linhas_ativas_prev, "int"),
     delta_color="normal"
 )
-)
 
 # --- Financeiro (com base nas colunas existentes) ---
 paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
