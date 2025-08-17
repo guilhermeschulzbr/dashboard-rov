@@ -39,6 +39,15 @@ def debug_guard(fn):
             return None
     return _wrap
 
+
+
+def gget(name, default=None):
+    try:
+        return globals().get(name, default)
+    except Exception:
+        return default
+
+
 # Ativa o toggle na sidebar (silencioso fora do Streamlit)
 try:
     import streamlit as _st_dbg
@@ -3216,12 +3225,6 @@ except Exception as e:
 # ========================
 # HELPERS DE ACESSO GLOBAL (redução de globals())
 # ========================
-def gget(name, default=None):
-    try:
-        return gget(name, default)
-    except Exception:
-        return default
-
 # ========================
 # DEBUG / LOG DE ERROS (opcional)
 # ========================
