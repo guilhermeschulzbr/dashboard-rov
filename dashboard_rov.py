@@ -909,6 +909,20 @@ kpi_cols[5].metric(
     delta_color="normal"
 )
 
+# --- Compatibilidade com código existente (apelidos de variáveis) ---
+total_pax = total_pax_cur
+viagens = viagens_cur
+dist_total = dist_total_cur
+veics_ids = veics_ids_cur
+linhas_ativas = linhas_ativas_cur
+media_pax = media_pax_cur
+# --- Compatibilidade com código existente (apelidos de variáveis) ---
+total_pax = total_pax_cur
+viagens = viagens_cur
+dist_total = dist_total_cur
+veics_ids = veics_ids_cur
+linhas_ativas = linhas_ativas_cur
+media_pax = media_pax_cur
 # --- Financeiro (com base nas colunas existentes) ---
 paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
 integration_cols_all = ["Quant Passagem Integracao","Quant Passe Integracao","Quant Vale Transporte Integracao"]
