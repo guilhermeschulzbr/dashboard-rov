@@ -17,6 +17,35 @@ def apply_plotly_theme(fig):
         pass
     return fig
 
+
+
+
+def debug_guard(fn):
+    """Decorator: captura exceções, registra log e mostra rastro se modo debug estiver ativo."""
+    def _wrap(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            _log_debug(tb)
+            try:
+                import streamlit as st
+                if _is_debug_enabled():
+                    st.error("⚠️ Erro ao renderizar este painel.")
+                    st.code(tb)
+            except Exception:
+                pass
+            return None
+    return _wrap
+
+# Ativa o toggle na sidebar (silencioso fora do Streamlit)
+try:
+    import streamlit as _st_dbg
+    _st_dbg.sidebar.checkbox("🔧 Modo debug", key="__DEBUG__", help="Exibe rastros de erro dos painéis.")
+except Exception:
+    pass
+
 # ========================
 # Observação: bloco não quebra nada existente; serve de referência única.
 REF_HOURS_DEFAULT = 7 + 20/60  # 7h20 em horas decimais
@@ -3211,29 +3240,3 @@ def _log_debug(msg):
         st.session_state["__DEBUG_LOGS__"] = logs
     except Exception:
         pass
-
-def debug_guard(fn):
-    """Decorator: captura exceções, registra log e mostra rastro se modo debug estiver ativo."""
-    def _wrap(*args, **kwargs):
-        try:
-            return fn(*args, **kwargs)
-        except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            _log_debug(tb)
-            try:
-                import streamlit as st
-                if _is_debug_enabled():
-                    st.error("⚠️ Erro ao renderizar este painel.")
-                    st.code(tb)
-            except Exception:
-                pass
-            return None
-    return _wrap
-
-# Ativa o toggle na sidebar (silencioso fora do Streamlit)
-try:
-    import streamlit as _st_dbg
-    _st_dbg.sidebar.checkbox("🔧 Modo debug", key="__DEBUG__", help="Exibe rastros de erro dos painéis.")
-except Exception:
-    pass
