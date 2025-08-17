@@ -774,162 +774,39 @@ subsidio_pagante = st.sidebar.number_input("Subsídio por pagante (R$)", min_val
 # ------------------------------
 kpi_cols = st.columns(6)
 
-# === Helpers para tendência ===
-def _find_time_col(df):
-    # tenta detectar uma coluna temporal comum
-    candidates = [
-        "Data", "data", "Date", "date",
-        "Data Viagem", "Data de Viagem",
-        "DataHoraSaida", "DataHoraChegada", "DataHora", "Datetime", "timestamp", "Timestamp",
-        "Hora Saida", "Hora"
-    ]
-    for c in candidates:
-        if c in df.columns:
-            return c
-    # fallback: primeira coluna do tipo datetime
-    for c in df.columns:
-        if str(df[c].dtype).startswith("datetime"):
-            return c
-    return None
+# Passageiros total
+total_pax = df_filtered["Passageiros"].sum() if "Passageiros" in df_filtered.columns else 0
+kpi_cols[0].metric("👥 Passageiros", fmt_int(total_pax))
 
-def _split_cur_prev(df):
-    """Divide o df filtrado em 'atual' (metade mais recente) e 'anterior' (metade mais antiga).
-    Se não houver coluna temporal, divide por índice (metade/metade)."""
-    if df is None or len(df) == 0:
-        return df, df
-    col_time = _find_time_col(df)
-    if col_time is not None:
-        s = df[col_time]
-        try:
-            s = pd.to_datetime(s, errors="coerce")
-        except Exception:
-            s = pd.to_datetime(df[col_time], errors="coerce")
-        df_sorted = df.copy()
-        df_sorted[col_time] = s
-        df_sorted = df_sorted.dropna(subset=[col_time]).sort_values(col_time)
-        if len(df_sorted) == 0:
-            # volta para split por índice
-            mid = len(df)//2
-            return df.iloc[mid:], df.iloc[:mid]
-        days = df_sorted[col_time].dt.floor("D").unique()
-        if len(days) < 2:
-            # pouco período: usa split por índice
-            mid = len(df_sorted)//2
-            return df_sorted.iloc[mid:], df_sorted.iloc[:mid]
-        # divide por dias: metade mais recente = atual
-        n = len(days)
-        cut = n // 2
-        prev_days = set(days[:cut])
-        cur_days = set(days[cut:])
-        prev_df = df_sorted[df_sorted[col_time].dt.floor("D").isin(prev_days)]
-        cur_df = df_sorted[df_sorted[col_time].dt.floor("D").isin(cur_days)]
-        return (cur_df if len(cur_df) else df_sorted.iloc[cut:],
-                prev_df if len(prev_df) else df_sorted.iloc[:cut])
-    # fallback por índice
-    mid = len(df)//2
-    return df.iloc[mid:], df.iloc[:mid]
+# Viagens registradas
+viagens = len(df_filtered)
+kpi_cols[1].metric("🧭 Viagens registradas", fmt_int(viagens))
 
-def _fmt_delta(val, kind="int", decimals=1):
-    try:
-        if kind == "int":
-            return f"{int(round(val)):+d}"
-        else:
-            return f"{val:+.{decimals}f}"
-    except Exception:
-        return "0"
-
-# Calcula dataframes atual x anterior com base no df filtrado
-_cur, _prev = _split_cur_prev(df_filtered)
-
-# --- Passageiros total ---
-total_pax_cur = _cur["Passageiros"].sum() if "Passageiros" in _cur.columns else 0
-total_pax_prev = _prev["Passageiros"].sum() if "Passageiros" in _prev.columns else 0
-kpi_cols[0].metric(
-    "👥 Passageiros",
-    fmt_int(total_pax_cur),
-    delta=_fmt_delta(total_pax_cur - total_pax_prev, "int"),
-    delta_color="normal"
-)
-
-# --- Viagens registradas ---
-viagens_cur = len(_cur)
-viagens_prev = len(_prev)
-kpi_cols[1].metric(
-    "🧭 Viagens registradas",
-    fmt_int(viagens_cur),
-    delta=_fmt_delta(viagens_cur - viagens_prev, "int"),
-    delta_color="normal"
-)
-
-# --- Distância total (usa distância configurada quando existir) ---
-if "Distancia_cfg_km" in _cur.columns and _cur["Distancia_cfg_km"].notna().any():
-    dist_total_cur = _cur["Distancia_cfg_km"].sum(min_count=1)
+# Distância total (usa distância configurada quando existir)
+if "Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any():
+    dist_total = df_filtered["Distancia_cfg_km"].sum(min_count=1)
 else:
-    dist_total_cur = _cur["Distancia"].sum() if "Distancia" in _cur.columns else 0.0
+    dist_total = df_filtered["Distancia"].sum() if "Distancia" in df_filtered.columns else 0.0
+kpi_cols[2].metric("🛣️ Distância total (km)", fmt_float(dist_total, 1))
 
-if "Distancia_cfg_km" in _prev.columns and _prev["Distancia_cfg_km"].notna().any():
-    dist_total_prev = _prev["Distancia_cfg_km"].sum(min_count=1)
-else:
-    dist_total_prev = _prev["Distancia"].sum() if "Distancia" in _prev.columns else 0.0
+# Média pax/viagem
+media_pax = (total_pax / viagens) if viagens > 0 else 0.0
+kpi_cols[3].metric("📈 Média pax/viagem", fmt_float(media_pax, 2))
 
-kpi_cols[2].metric(
-    "🛣️ Distância total (km)",
-    fmt_float(dist_total_cur, 1),
-    delta=_fmt_delta(dist_total_cur - dist_total_prev, "float", decimals=1),
-    delta_color="normal"
-)
+# Veículos (IDs distintos na base filtrada)
+veics_ids = df_filtered["Numero Veiculo"].nunique() if "Numero Veiculo" in df_filtered.columns else 0
+kpi_cols[4].metric("🚌 Veículos (IDs distintos)", fmt_int(veics_ids))
 
-# --- Média pax/viagem ---
-media_pax_cur = (total_pax_cur / viagens_cur) if viagens_cur > 0 else 0.0
-media_pax_prev = (total_pax_prev / viagens_prev) if viagens_prev > 0 else 0.0
-kpi_cols[3].metric(
-    "📈 Média pax/viagem",
-    fmt_float(media_pax_cur, 2),
-    delta=_fmt_delta(media_pax_cur - media_pax_prev, "float", decimals=2),
-    delta_color="normal"
-)
+# Linhas ativas
+linhas_ativas = df_filtered["Nome Linha"].nunique() if "Nome Linha" in df_filtered.columns else 0
+kpi_cols[5].metric("🧵 Linhas ativas", fmt_int(linhas_ativas))
 
-# --- Veículos (IDs distintos) ---
-veics_ids_cur = _cur["Numero Veiculo"].nunique() if "Numero Veiculo" in _cur.columns else 0
-veics_ids_prev = _prev["Numero Veiculo"].nunique() if "Numero Veiculo" in _prev.columns else 0
-kpi_cols[4].metric(
-    "🚌 Veículos (IDs distintos)",
-    fmt_int(veics_ids_cur),
-    delta=_fmt_delta(veics_ids_cur - veics_ids_prev, "int"),
-    delta_color="normal"
-)
-
-# --- Linhas ativas ---
-linhas_ativas_cur = _cur["Nome Linha"].nunique() if "Nome Linha" in _cur.columns else 0
-linhas_ativas_prev = _prev["Nome Linha"].nunique() if "Nome Linha" in _prev.columns else 0
-kpi_cols[5].metric(
-    "🧵 Linhas ativas",
-    fmt_int(linhas_ativas_cur),
-    delta=_fmt_delta(linhas_ativas_cur - linhas_ativas_prev, "int"),
-    delta_color="normal"
-)
-
-# --- Compatibilidade com código existente (apelidos de variáveis) ---
-total_pax = total_pax_cur
-viagens = viagens_cur
-dist_total = dist_total_cur
-veics_ids = veics_ids_cur
-linhas_ativas = linhas_ativas_cur
-media_pax = media_pax_cur
-# --- Compatibilidade com código existente (apelidos de variáveis) ---
-total_pax = total_pax_cur
-viagens = viagens_cur
-dist_total = dist_total_cur
-veics_ids = veics_ids_cur
-linhas_ativas = linhas_ativas_cur
-media_pax = media_pax_cur
 # --- Financeiro (com base nas colunas existentes) ---
 paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
 integration_cols_all = ["Quant Passagem Integracao","Quant Passe Integracao","Quant Vale Transporte Integracao"]
 present_paying = [c for c in paying_cols_all if c in df_filtered.columns]
 present_integration = [c for c in integration_cols_all if c in df_filtered.columns]
 
-# Totais no período filtrado (mantidos para compatibilidade/uso geral)
 total_pagantes = float(df_filtered[present_paying].sum().sum()) if present_paying else 0.0
 total_integracoes = float(df_filtered[present_integration].sum().sum()) if present_integration else 0.0
 total_gratuidade = float(df_filtered["Quant Gratuidade"].sum()) if "Quant Gratuidade" in df_filtered.columns else 0.0
@@ -938,109 +815,19 @@ receita_tarifaria = total_pagantes * float(tarifa_usuario)
 subsidio_total = total_pagantes * float(subsidio_pagante)
 receita_total = receita_tarifaria + subsidio_total
 
-# Base para custo público/pax (mantém a mesma lógica do código original)
-pax_total_calc = float(total_pax) if 'total_pax' in globals() and pd.notna(total_pax) else (float(df_filtered["Passageiros"].sum()) if "Passageiros" in df_filtered.columns else 0.0)
+pax_total_calc = float(total_pax) if pd.notna(total_pax) else 0.0
 custo_publico_por_pax_total = (subsidio_total / pax_total_calc) if pax_total_calc > 0 else 0.0
-
-# ===== Tendências (metade mais recente vs metade anterior) =====
-def _fin_find_time_col(df):
-    candidates = ["Data","data","Date","date","Data Viagem","Data de Viagem",
-                  "DataHoraSaida","DataHoraChegada","DataHora","Datetime","timestamp","Timestamp",
-                  "Hora Saida","Hora"]
-    for c in candidates:
-        if c in df.columns:
-            return c
-    for c in df.columns:
-        if str(df[c].dtype).startswith("datetime"):
-            return c
-    return None
-
-def _fin_split_cur_prev(df):
-    if df is None or len(df) == 0:
-        return df, df
-    col_time = _fin_find_time_col(df)
-    if col_time is not None:
-        s = pd.to_datetime(df[col_time], errors="coerce")
-        df2 = df.copy()
-        df2[col_time] = s
-        df2 = df2.dropna(subset=[col_time]).sort_values(col_time)
-        if len(df2) == 0:
-            mid = len(df)//2
-            return df.iloc[mid:], df.iloc[:mid]
-        days = df2[col_time].dt.floor("D").unique()
-        if len(days) < 2:
-            mid = len(df2)//2
-            return df2.iloc[mid:], df2.iloc[:mid]
-        n = len(days)
-        cut = n // 2
-        prev_days = set(days[:cut])
-        cur_days = set(days[cut:])
-        prev_df = df2[df2[col_time].dt.floor("D").isin(prev_days)]
-        cur_df = df2[df2[col_time].dt.floor("D").isin(cur_days)]
-        return (cur_df if len(cur_df) else df2.iloc[cut:],
-                prev_df if len(prev_df) else df2.iloc[:cut])
-    mid = len(df)//2
-    return df.iloc[mid:], df.iloc[:mid]
-
-def _fin_fmt_delta(val, kind="int", decimals=2):
-    try:
-        if kind == "int":
-            return f"{int(round(val)):+d}"
-        else:
-            return f"{val:+.{decimals}f}"
-    except Exception:
-        return "0"
-
-_fin_cur, _fin_prev = _fin_split_cur_prev(df_filtered)
-
-# Colunas presentes em cada metade
-present_paying_cur = [c for c in paying_cols_all if c in _fin_cur.columns]
-present_integration_cur = [c for c in integration_cols_all if c in _fin_cur.columns]
-present_paying_prev = [c for c in paying_cols_all if c in _fin_prev.columns]
-present_integration_prev = [c for c in integration_cols_all if c in _fin_prev.columns]
-
-# Cálculos por metade
-total_pagantes_cur = float(_fin_cur[present_paying_cur].sum().sum()) if present_paying_cur else 0.0
-total_integracoes_cur = float(_fin_cur[present_integration_cur].sum().sum()) if present_integration_cur else 0.0
-total_gratuidade_cur = float(_fin_cur["Quant Gratuidade"].sum()) if "Quant Gratuidade" in _fin_cur.columns else 0.0
-
-total_pagantes_prev = float(_fin_prev[present_paying_prev].sum().sum()) if present_paying_prev else 0.0
-total_integracoes_prev = float(_fin_prev[present_integration_prev].sum().sum()) if present_integration_prev else 0.0
-total_gratuidade_prev = float(_fin_prev["Quant Gratuidade"].sum()) if "Quant Gratuidade" in _fin_prev.columns else 0.0
-
-# Receitas por metade
-receita_tarifaria_cur = total_pagantes_cur * float(tarifa_usuario)
-subsidio_total_cur   = total_pagantes_cur * float(subsidio_pagante)
-receita_total_cur    = receita_tarifaria_cur + subsidio_total_cur
-
-receita_tarifaria_prev = total_pagantes_prev * float(tarifa_usuario)
-subsidio_total_prev   = total_pagantes_prev * float(subsidio_pagante)
-receita_total_prev    = receita_tarifaria_prev + subsidio_total_prev
-
-# Custo público/pax por metade
-pax_total_cur = float(_fin_cur["Passageiros"].sum()) if "Passageiros" in _fin_cur.columns else 0.0
-pax_total_prev = float(_fin_prev["Passageiros"].sum()) if "Passageiros" in _fin_prev.columns else 0.0
-custo_pub_pax_cur = (subsidio_total_cur / pax_total_cur) if pax_total_cur > 0 else 0.0
-custo_pub_pax_prev = (subsidio_total_prev / pax_total_prev) if pax_total_prev > 0 else 0.0
-
-# Deltas
-_delta_pagantes = total_pagantes_cur - total_pagantes_prev
-_delta_integracoes = total_integracoes_cur - total_integracoes_prev
-_delta_gratuidade = total_gratuidade_cur - total_gratuidade_prev
-_delta_rec_tarif = receita_tarifaria_cur - receita_tarifaria_prev
-_delta_subsidio = subsidio_total_cur - subsidio_total_prev
-_delta_custo_pub_pax = custo_pub_pax_cur - custo_pub_pax_prev
-_delta_rec_total = receita_total_cur - receita_total_prev
 
 st.subheader("💰 Indicadores financeiros (parâmetros na barra lateral)")
 fin_cols = st.columns(7)
-fin_cols[0].metric("Pagantes", fmt_int(total_pagantes), delta=_fin_fmt_delta(_delta_pagantes, "int"), delta_color="normal")
-fin_cols[1].metric("Integrações (sem custo)", fmt_int(total_integracoes), delta=_fin_fmt_delta(_delta_integracoes, "int"), delta_color="normal")
-fin_cols[2].metric("Gratuidades", fmt_int(total_gratuidade), delta=_fin_fmt_delta(_delta_gratuidade, "int"), delta_color="normal")
-fin_cols[3].metric("Receita tarifária", fmt_currency(receita_tarifaria, 2), delta=_fin_fmt_delta(_delta_rec_tarif, "float", 2), delta_color="normal")
-fin_cols[4].metric("Subsídio total", fmt_currency(subsidio_total, 2), delta=_fin_fmt_delta(_delta_subsidio, "float", 2), delta_color="normal")
-fin_cols[5].metric("Custo público/pax", fmt_currency(custo_publico_por_pax_total, 2), delta=_fin_fmt_delta(_delta_custo_pub_pax, "float", 2), delta_color="normal")
-fin_cols[6].metric("Receita total", fmt_currency(receita_total, 2), delta=_fin_fmt_delta(_delta_rec_total, "float", 2), delta_color="normal")
+fin_cols[0].metric("Pagantes", fmt_int(total_pagantes))
+fin_cols[1].metric("Integrações (sem custo)", fmt_int(total_integracoes))
+fin_cols[2].metric("Gratuidades", fmt_int(total_gratuidade))
+fin_cols[3].metric("Receita tarifária", fmt_currency(receita_tarifaria, 2))
+fin_cols[4].metric("Subsídio total", fmt_currency(subsidio_total, 2))
+fin_cols[5].metric("Custo público/pax", fmt_currency(custo_publico_por_pax_total, 2))
+fin_cols[6].metric("Receita total", fmt_currency(receita_total, 2))
+
 # ---------- NOVOS INDICADORES ----------
 # IPK (passageiros por km)
 ipk_total    = (total_pax / dist_total)     if dist_total and dist_total > 0 else 0.0
@@ -1802,34 +1589,25 @@ if "Nome Linha" in df_filtered.columns:
     giro_veic_tbl      = veic_ids_uni_tbl / veic_cfg_med_tbl.replace(0, np.nan)  # % de giro
 
     tabela = pd.DataFrame({
-    # Frota & operação
-    "Veículos Conf.": veic_cfg_med_tbl,
-    "Veículos (IDs Distintos)": veic_ids_uni_tbl,
-    "% Giro de Veículos": giro_veic_tbl,
-    "Tot. Viagens": viagens_total_tbl,
-    "Viagens p/ Veic": (viagens_total_tbl / veic_ids_uni_tbl.replace(0, np.nan)),
-
-    # Produção
-    "Km Rodada": km_rodado_tbl,
-
-    # Demanda
-    "Pass. Transp.": pax_total_tbl,
-    "Pass. Grat.": grat_tbl,
-    "Pass. Pag.": pagantes_tbl,
-    "% Grat. s/ Pag.": pct_grat_s_pag_tbl,
-    "Pass. Tot. p/ Viagem": pax_tot_viag_tbl,
-    "Pass. Pag. p/ Viagem": pag_viag_tbl,
-
-    # Produtividade
-    "IPK Total": ipk_total_l_tbl,
-    "IPK Pag.": ipk_pag_l_tbl,
-
-    # Receita
-    "R$ Receita Total": receita_tot_l_tbl,
-    "R$ Rec. p/ Km rodado": rec_por_km_tbl,
-    "R$ Rec. p/ Pass Tot.": rec_por_pax_tbl,
-    "R$ Rec. p/ Veic. Conf.": rec_por_veic_tbl,
-}).reset_index().rename(columns={"Nome Linha":"Nome Linha"})
+        "Veículos Conf.": veic_cfg_med_tbl,
+        "Veículos (IDs Distintos)": veic_ids_uni_tbl,
+        "% Giro de Veículos": giro_veic_tbl,
+        "Km Rodada": km_rodado_tbl,
+        "Pass. Transp.": pax_total_tbl,
+        "Pass. Grat.": grat_tbl,
+        "Pass. Pag.": pagantes_tbl,
+        "% Grat. s/ Pag.": pct_grat_s_pag_tbl,
+        "IPK Total": ipk_total_l_tbl,
+        "IPK Pag.": ipk_pag_l_tbl,
+        "R$ Rec. p/ Veic. Conf.": rec_por_veic_tbl,
+        "R$ Rec. p/ Pass Tot.": rec_por_pax_tbl,
+        "R$ Rec. p/ Km rodado": rec_por_km_tbl,
+        "Pass. Tot. p/ Viagem": pax_tot_viag_tbl,
+        "Pass. Pag. p/ Viagem": pag_viag_tbl,
+        "R$ Receita Total": receita_tot_l_tbl,
+        "Tot. Viagens": viagens_total_tbl,
+        "Viagens p/ Veic": (viagens_total_tbl / veic_ids_uni_tbl.replace(0, np.nan)),
+    }).reset_index().rename(columns={"Nome Linha":"Nome Linha"})
 
     # ===== Totalização =====
     total_veic_cfg_sum   = veic_cfg_med_tbl.sum(skipna=True)
