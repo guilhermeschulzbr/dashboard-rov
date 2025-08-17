@@ -930,7 +930,33 @@ else:
         aproveitamento_pct = pd.Series(dtype=float)
 
     # KPIs médios por motorista (sobre o conjunto filtrado)
-    n_motoristas = len(viagens_m.index)
+    # Motoristas distintos (robusto ao período filtrado)
+    # Preferir 'Matricula'; se ausente, normalizar nome do motorista
+    try:
+        import unicodedata as _ud
+        def _norm_drv(x):
+            if pd.isna(x):
+                return None
+            s = str(x).strip()
+            if not s:
+                return None
+            s = ''.join(c for c in _ud.normalize("NFKD", s) if not _ud.combining(c))
+            s = ' '.join(s.split()).upper()
+            return s
+        if "Matricula" in df_filtered.columns and df_filtered["Matricula"].notna().any():
+            _drv = df_filtered["Matricula"].astype(str).str.strip()
+            _invalid = _drv.eq("") | _drv.str.lower().isin(["nan","none","null","-"])
+            n_motoristas = int(_drv[~_invalid].nunique())
+        elif "Cobrador/Operador" in df_filtered.columns and df_filtered["Cobrador/Operador"].notna().any():
+            _drv = df_filtered["Cobrador/Operador"].map(_norm_drv)
+            _invalid = _drv.isna() | _drv.isin({"TREINAMENTO","TESTE","SEM MOTORISTA","S/MOTORISTA","S MOTORISTA","N/A","NA"})
+            n_motoristas = int(_drv[~_invalid].nunique())
+        else:
+            n_motoristas = 0
+    except Exception:
+        # fallback para lógica anterior caso algo dê errado
+        n_motoristas = len(viagens_m.index)
+
     k1, k2, k3, k4, k5 = st.columns(5)
 # === Cálculo robusto de Motoristas distintos (no período filtrado) ===
 # Preferimos 'Matricula' (identificador estável). Se ausente, usamos nome normalizado.
