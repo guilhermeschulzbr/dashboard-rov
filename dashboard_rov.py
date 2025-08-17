@@ -2804,7 +2804,7 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
     for _mot, _mins in _totais.items():
         _extra = max(0, _mins - _limite_min)
         if _extra > 0:
-            mot_label_map[_mot] = f"⚡ <b>{_mot} — {_fmt_hhmm(_mins)} (HE {_fmt_hhmm(_extra)})</b>"
+            mot_label_map[_mot] = f"⚡ {_mot} — {_fmt_hhmm(_mins)} (HE {_fmt_hhmm(_extra)})"
         else:
             mot_label_map[_mot] = f"{_mot} — {_fmt_hhmm(_mins)}"
     with st.expander("Filtros — Motoristas × Linhas"):
