@@ -1,5 +1,22 @@
 # ========================
 # CONFIGURAÇÕES CENTRAIS
+
+# ========================
+# TEMA PADRÃO DE GRÁFICOS
+# ========================
+def apply_plotly_theme(fig):
+    """Aplica um layout padrão consistente aos gráficos Plotly."""
+    try:
+        fig.update_layout(
+            template="plotly_white",
+            font=dict(size=12),
+            margin=dict(l=40, r=20, t=40, b=40),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+    except Exception:
+        pass
+    return fig
+
 # ========================
 # Observação: bloco não quebra nada existente; serve de referência única.
 REF_HOURS_DEFAULT = 7 + 20/60  # 7h20 em horas decimais
