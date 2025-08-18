@@ -82,7 +82,15 @@ def fmt_float(x, nd=2):
         return f"{float(x):,.{nd}f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception:
         return "0,00"
-
+        
+def trend_delta(atual, anterior, nd=1):
+    if anterior is None or anterior == 0:
+        return ""
+    abs_delta = atual - anterior
+    pct_delta = (abs_delta / anterior) * 100
+    sinal = "+" if abs_delta > 0 else ""
+    return f"{sinal}{fmt_int(abs_delta)} ({sinal}{fmt_float(pct_delta, nd)}%)"
+    
 def fmt_currency(x, nd=2):
     return f"R$ {fmt_float(x, nd)}"
 
