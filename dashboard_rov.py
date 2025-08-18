@@ -769,38 +769,77 @@ st.sidebar.header("Financeiro")
 tarifa_usuario = st.sidebar.number_input("Tarifa ao usuário (R$)", min_value=0.0, value=2.00, step=0.10, format="%.2f")
 subsidio_pagante = st.sidebar.number_input("Subsídio por pagante (R$)", min_value=0.0, value=4.20, step=0.10, format="%.2f")
 
+# ... (todo o código acima permanece igual)
+
 # ------------------------------
-# KPIs
+# KPIs com tendência (deltas)
 # ------------------------------
+
+# Função para formatar delta/tendência dos KPIs
+def trend_delta(atual, anterior, nd=1):
+    if anterior is None or anterior == 0:
+        return ""
+    abs_delta = atual - anterior
+    pct_delta = (abs_delta / anterior) * 100
+    sinal = "+" if abs_delta > 0 else ""
+    return f"{sinal}{fmt_int(abs_delta)} ({sinal}{fmt_float(pct_delta, nd)}%)"
+
+# Bloco de cálculo do período anterior para tendência nos KPIs
+if "Data Coleta" in df.columns and df["Data Coleta"].notna().any():
+    data_min = pd.to_datetime(df_filtered["Data Coleta"].min())
+    data_max = pd.to_datetime(df_filtered["Data Coleta"].max())
+    periodo_dias = (data_max - data_min).days + 1
+    periodo_ant_ini = data_min - pd.Timedelta(days=periodo_dias)
+    periodo_ant_fim = data_min - pd.Timedelta(days=1)
+    df_ant = df[(df["Data Coleta"].dt.date >= periodo_ant_ini.date()) & (df["Data Coleta"].dt.date <= periodo_ant_fim.date())]
+else:
+    df_ant = pd.DataFrame()
+
 kpi_cols = st.columns(6)
 
 # Passageiros total
 total_pax = df_filtered["Passageiros"].sum() if "Passageiros" in df_filtered.columns else 0
-kpi_cols[0].metric("👥 Passageiros", fmt_int(total_pax))
+if not df_ant.empty:
+    total_pax_ant = df_ant["Passageiros"].sum() if "Passageiros" in df_ant.columns else 0
+else:
+    total_pax_ant = None
+kpi_cols[0].metric("👥 Passageiros", fmt_int(total_pax), delta=trend_delta(total_pax, total_pax_ant))
 
 # Viagens registradas
 viagens = len(df_filtered)
-kpi_cols[1].metric("🧭 Viagens registradas", fmt_int(viagens))
+viagens_ant = len(df_ant) if not df_ant.empty else None
+kpi_cols[1].metric("🧭 Viagens registradas", fmt_int(viagens), delta=trend_delta(viagens, viagens_ant))
 
 # Distância total (usa distância configurada quando existir)
 if "Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any():
     dist_total = df_filtered["Distancia_cfg_km"].sum(min_count=1)
 else:
     dist_total = df_filtered["Distancia"].sum() if "Distancia" in df_filtered.columns else 0.0
-kpi_cols[2].metric("🛣️ Distância total (km)", fmt_float(dist_total, 1))
+if not df_ant.empty:
+    if "Distancia_cfg_km" in df_ant.columns and df_ant["Distancia_cfg_km"].notna().any():
+        dist_total_ant = df_ant["Distancia_cfg_km"].sum(min_count=1)
+    else:
+        dist_total_ant = df_ant["Distancia"].sum() if "Distancia" in df_ant.columns else 0.0
+else:
+    dist_total_ant = None
+kpi_cols[2].metric("🛣️ Distância total (km)", fmt_float(dist_total, 1), delta=trend_delta(dist_total, dist_total_ant, nd=1))
 
 # Média pax/viagem
 media_pax = (total_pax / viagens) if viagens > 0 else 0.0
-kpi_cols[3].metric("📈 Média pax/viagem", fmt_float(media_pax, 2))
+media_pax_ant = (total_pax_ant / viagens_ant) if (total_pax_ant is not None and viagens_ant and viagens_ant > 0) else None
+kpi_cols[3].metric("📈 Média pax/viagem", fmt_float(media_pax, 2), delta=trend_delta(media_pax, media_pax_ant, nd=2))
 
-# Veículos (IDs distintos na base filtrada)
+# Veículos distintos
 veics_ids = df_filtered["Numero Veiculo"].nunique() if "Numero Veiculo" in df_filtered.columns else 0
-kpi_cols[4].metric("🚌 Veículos (IDs distintos)", fmt_int(veics_ids))
+veics_ids_ant = df_ant["Numero Veiculo"].nunique() if not df_ant.empty and "Numero Veiculo" in df_ant.columns else None
+kpi_cols[4].metric("🚌 Veículos (IDs distintos)", fmt_int(veics_ids), delta=trend_delta(veics_ids, veics_ids_ant))
 
 # Linhas ativas
 linhas_ativas = df_filtered["Nome Linha"].nunique() if "Nome Linha" in df_filtered.columns else 0
-kpi_cols[5].metric("🧵 Linhas ativas", fmt_int(linhas_ativas))
+linhas_ativas_ant = df_ant["Nome Linha"].nunique() if not df_ant.empty and "Nome Linha" in df_ant.columns else None
+kpi_cols[5].metric("🧵 Linhas ativas", fmt_int(linhas_ativas), delta=trend_delta(linhas_ativas, linhas_ativas_ant))
 
+# ... (todo o restante do código permanece igual)
 # --- Financeiro (com base nas colunas existentes) ---
 paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
 integration_cols_all = ["Quant Passagem Integracao","Quant Passe Integracao","Quant Vale Transporte Integracao"]
