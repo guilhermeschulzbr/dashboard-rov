@@ -783,14 +783,6 @@ subsidio_pagante = st.sidebar.number_input("Subsídio por pagante (R$)", min_val
 # KPIs com tendência (deltas)
 # ------------------------------
 
-# Função para formatar delta/tendência dos KPIs
-def trend_delta(atual, anterior, nd=1):
-    if anterior is None or anterior == 0:
-        return ""
-    abs_delta = atual - anterior
-    pct_delta = (abs_delta / anterior) * 100
-    sinal = "+" if abs_delta > 0 else ""
-    return f"{sinal}{fmt_int(abs_delta)} ({sinal}{fmt_float(pct_delta, nd)}%)"
 
 # Bloco de cálculo do período anterior para tendência nos KPIs
 if "Data Coleta" in df.columns and df["Data Coleta"].notna().any():
