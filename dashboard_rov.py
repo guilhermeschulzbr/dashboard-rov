@@ -783,61 +783,136 @@ subsidio_pagante = st.sidebar.number_input("Subsídio por pagante (R$)", min_val
 # KPIs com tendência (deltas)
 # ------------------------------
 
+# Função para formatar delta/tendência dos KPIs (robusta para int/float)
+def trend_delta(atual, anterior, nd_abs=1, nd_pct=1):
+    import math
+    # Trata None, NaN e divisor zero
+    if anterior is None:
+        return ""
+    try:
+        if hasattr(anterior, "isna") and anterior.isna():
+            return ""
+    except Exception:
+        pass
+    if anterior == 0 or (isinstance(anterior, float) and math.isclose(anterior, 0.0, abs_tol=1e-12)):
+        return ""
 
-# Bloco de cálculo do período anterior para tendência nos KPIs
-if "Data Coleta" in df.columns and df["Data Coleta"].notna().any():
-    data_min = pd.to_datetime(df_filtered["Data Coleta"].min())
-    data_max = pd.to_datetime(df_filtered["Data Coleta"].max())
-    periodo_dias = (data_max - data_min).days + 1
+    try:
+        abs_delta = float(atual) - float(anterior)
+    except Exception:
+        return ""
+
+    # Formatação do delta absoluto respeitando casas decimais quando necessário
+    is_int_like = abs(abs_delta - round(abs_delta)) < 1e-9
+    if is_int_like:
+        abs_fmt = fmt_int(int(round(abs_delta)))
+    else:
+        abs_fmt = fmt_float(abs_delta, nd_abs)
+
+    # Percentual
+    pct_delta = (abs_delta / float(anterior)) * 100.0
+    pct_fmt = fmt_float(pct_delta, nd_pct)
+
+    # Sinal: só adiciona '+' no caso positivo
+    sinal = "+" if abs_delta > 0 else ""
+    return f"{sinal}{abs_fmt} ({sinal}{pct_fmt}%)"
+
+
+# --- Bloco de cálculo do período anterior para tendência nos KPIs ---
+# Requisitos:
+# - Usar o MESMO subconjunto de filtros (linha, veículo, etc.) do df_filtered
+# - Apenas trocar a janela de datas para o período anterior de tamanho equivalente
+import pandas as pd
+
+date_col = "Data Coleta"
+
+# Garante tipo datetime nos dois dataframes (se aplicável)
+if date_col in df.columns and not pd.api.types.is_datetime64_any_dtype(df[date_col]):
+    with pd.option_context("mode.chained_assignment", None):
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+
+if date_col in df_filtered.columns and not pd.api.types.is_datetime64_any_dtype(df_filtered[date_col]):
+    with pd.option_context("mode.chained_assignment", None):
+        df_filtered[date_col] = pd.to_datetime(df_filtered[date_col], errors="coerce")
+
+# Calcula a janela atual com base no df_filtered (que representa os filtros do usuário)
+if date_col in df_filtered.columns and df_filtered[date_col].notna().any():
+    data_min = pd.to_datetime(df_filtered[date_col].min())
+    data_max = pd.to_datetime(df_filtered[date_col].max())
+    # Janela em dias (inclusiva)
+    periodo_dias = int((data_max - data_min).days) + 1
+
+    # Período anterior (tamanho idêntico) imediatamente anterior ao data_min
     periodo_ant_ini = data_min - pd.Timedelta(days=periodo_dias)
     periodo_ant_fim = data_min - pd.Timedelta(days=1)
-    df_ant = df[(df["Data Coleta"].dt.date >= periodo_ant_ini.date()) & (df["Data Coleta"].dt.date <= periodo_ant_fim.date())]
+
+    # Reconstrói o mesmo subconjunto do df (antes de aplicar o filtro de data), usando as dimensões presentes no df_filtered
+    # Para isso, usamos colunas-chave comuns de filtro quando existirem
+    filtro_cols_candidatas = [
+        "Nome Linha", "Numero Veiculo", "Placa", "Motorista", "Matricula Motorista",
+        "Empresa", "Consorcio", "Turno", "Sentido"
+    ]
+    filtro_cols = [c for c in filtro_cols_candidatas if c in df.columns and c in df_filtered.columns]
+
+    df_base_mesmos_filtros = df
+    for c in filtro_cols:
+        valores = df_filtered[c].dropna().unique().tolist()
+        if len(valores) > 0 and len(valores) < max(50, len(valores)):  # evita filtro inútil com cardinalidade muito alta desconhecida
+            df_base_mesmos_filtros = df_base_mesmos_filtros[df_base_mesmos_filtros[c].isin(valores)]
+
+    # Agora aplica apenas a janela de datas anterior
+    if date_col in df_base_mesmos_filtros.columns:
+        df_ant = df_base_mesmos_filtros[
+            (df_base_mesmos_filtros[date_col] >= periodo_ant_ini) &
+            (df_base_mesmos_filtros[date_col] <= periodo_ant_fim)
+        ].copy()
+    else:
+        df_ant = pd.DataFrame()
 else:
     df_ant = pd.DataFrame()
 
 kpi_cols = st.columns(6)
 
 # Passageiros total
-total_pax = df_filtered["Passageiros"].sum() if "Passageiros" in df_filtered.columns else 0
-if not df_ant.empty:
-    total_pax_ant = df_ant["Passageiros"].sum() if "Passageiros" in df_ant.columns else 0
-else:
-    total_pax_ant = None
-kpi_cols[0].metric("👥 Passageiros", fmt_int(total_pax), delta=trend_delta(total_pax, total_pax_ant))
+total_pax = df_filtered["Passageiros"].sum(min_count=1) if "Passageiros" in df_filtered.columns else 0
+total_pax_ant = df_ant["Passageiros"].sum(min_count=1) if (not df_ant.empty and "Passageiros" in df_ant.columns) else None
+kpi_cols[0].metric("👥 Passageiros", fmt_int(total_pax), delta=trend_delta(total_pax, total_pax_ant, nd_abs=0, nd_pct=1))
 
 # Viagens registradas
 viagens = len(df_filtered)
 viagens_ant = len(df_ant) if not df_ant.empty else None
-kpi_cols[1].metric("🧭 Viagens registradas", fmt_int(viagens), delta=trend_delta(viagens, viagens_ant))
+kpi_cols[1].metric("🧭 Viagens registradas", fmt_int(viagens), delta=trend_delta(viagens, viagens_ant, nd_abs=0, nd_pct=1))
 
 # Distância total (usa distância configurada quando existir)
 if "Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any():
     dist_total = df_filtered["Distancia_cfg_km"].sum(min_count=1)
 else:
-    dist_total = df_filtered["Distancia"].sum() if "Distancia" in df_filtered.columns else 0.0
+    dist_total = df_filtered["Distancia"].sum(min_count=1) if "Distancia" in df_filtered.columns else 0.0
+
 if not df_ant.empty:
     if "Distancia_cfg_km" in df_ant.columns and df_ant["Distancia_cfg_km"].notna().any():
         dist_total_ant = df_ant["Distancia_cfg_km"].sum(min_count=1)
     else:
-        dist_total_ant = df_ant["Distancia"].sum() if "Distancia" in df_ant.columns else 0.0
+        dist_total_ant = df_ant["Distancia"].sum(min_count=1) if "Distancia" in df_ant.columns else 0.0
 else:
     dist_total_ant = None
-kpi_cols[2].metric("🛣️ Distância total (km)", fmt_float(dist_total, 1), delta=trend_delta(dist_total, dist_total_ant, nd=1))
+
+kpi_cols[2].metric("🛣️ Distância total (km)", fmt_float(dist_total, 1), delta=trend_delta(dist_total, dist_total_ant, nd_abs=1, nd_pct=1))
 
 # Média pax/viagem
-media_pax = (total_pax / viagens) if viagens > 0 else 0.0
-media_pax_ant = (total_pax_ant / viagens_ant) if (total_pax_ant is not None and viagens_ant and viagens_ant > 0) else None
-kpi_cols[3].metric("📈 Média pax/viagem", fmt_float(media_pax, 2), delta=trend_delta(media_pax, media_pax_ant, nd=2))
+media_pax = (float(total_pax) / float(viagens)) if viagens > 0 else 0.0
+media_pax_ant = (float(total_pax_ant) / float(viagens_ant)) if (total_pax_ant is not None and viagens_ant and viagens_ant > 0) else None
+kpi_cols[3].metric("📈 Média pax/viagem", fmt_float(media_pax, 2), delta=trend_delta(media_pax, media_pax_ant, nd_abs=2, nd_pct=2))
 
 # Veículos distintos
-veics_ids = df_filtered["Numero Veiculo"].nunique() if "Numero Veiculo" in df_filtered.columns else 0
-veics_ids_ant = df_ant["Numero Veiculo"].nunique() if not df_ant.empty and "Numero Veiculo" in df_ant.columns else None
-kpi_cols[4].metric("🚌 Veículos (IDs distintos)", fmt_int(veics_ids), delta=trend_delta(veics_ids, veics_ids_ant))
+veics_ids = df_filtered["Numero Veiculo"].nunique(dropna=True) if "Numero Veiculo" in df_filtered.columns else 0
+veics_ids_ant = df_ant["Numero Veiculo"].nunique(dropna=True) if (not df_ant.empty and "Numero Veiculo" in df_ant.columns) else None
+kpi_cols[4].metric("🚌 Veículos (IDs distintos)", fmt_int(veics_ids), delta=trend_delta(veics_ids, veics_ids_ant, nd_abs=0, nd_pct=1))
 
 # Linhas ativas
-linhas_ativas = df_filtered["Nome Linha"].nunique() if "Nome Linha" in df_filtered.columns else 0
-linhas_ativas_ant = df_ant["Nome Linha"].nunique() if not df_ant.empty and "Nome Linha" in df_ant.columns else None
-kpi_cols[5].metric("🧵 Linhas ativas", fmt_int(linhas_ativas), delta=trend_delta(linhas_ativas, linhas_ativas_ant))
+linhas_ativas = df_filtered["Nome Linha"].nunique(dropna=True) if "Nome Linha" in df_filtered.columns else 0
+linhas_ativas_ant = df_ant["Nome Linha"].nunique(dropna=True) if (not df_ant.empty and "Nome Linha" in df_ant.columns) else None
+kpi_cols[5].metric("🧵 Linhas ativas", fmt_int(linhas_ativas), delta=trend_delta(linhas_ativas, linhas_ativas_ant, nd_abs=0, nd_pct=1))
 
 # ... (todo o restante do código permanece igual)
 # --- Financeiro (com base nas colunas existentes) ---
