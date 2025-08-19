@@ -66,7 +66,52 @@ def save_json_config(path: str, data) -> bool:
             json.dump(data, f, ensure_ascii=False, indent=2)
         return True
     except Exception:
-        return False
+        return False# --- Resolvedores de caminho para configs ---
+def _candidate_config_dirs():
+    dirs = []
+    try:
+        # diretório de execução
+        dirs.append(os.getcwd())
+    except Exception:
+        pass
+    try:
+        # diretório do script
+        base = os.path.dirname(os.path.abspath(__file__))
+        dirs += [base, os.path.join(base, "config"), os.path.join(base, "data")]
+        # pai do script
+        parent = os.path.dirname(base)
+        dirs += [parent, os.path.join(parent, "config"), os.path.join(parent, "data")]
+    except Exception:
+        pass
+    # variável de ambiente opcional
+    envdir = os.environ.get("ROV_CONFIG_DIR")
+    if envdir:
+        dirs.insert(0, envdir)
+    # home do usuário
+    try:
+        home = os.path.expanduser("~")
+        dirs += [os.path.join(home, ".dashboard_rov")]
+    except Exception:
+        pass
+    # remove duplicados preservando ordem
+    seen = set()
+    ordered = []
+    for d in dirs:
+        if d and d not in seen and os.path.isdir(d):
+            seen.add(d); ordered.append(d)
+    return ordered or [os.getcwd()]
+
+def resolve_config_path(basename: str):
+    # Se já existir no cwd, usa direto
+    if os.path.isabs(basename) and os.path.exists(basename):
+        return basename
+    for d in _candidate_config_dirs():
+        p = os.path.join(d, basename)
+        if os.path.exists(p):
+            return p
+    # fallback: retorna caminho no cwd, mesmo que não exista (servirá para salvar)
+    return os.path.join(os.getcwd(), basename)
+
 
 # ------------------------------
 # Helpers de formatação PT-BR
@@ -390,10 +435,10 @@ def load_data(csv: object) -> pd.DataFrame:
 BASE_DATE_FOR_FALLBACK = pd.Timestamp("2025-07-08")
 
 def load_km_store() -> dict:
-    return load_json_config(CONFIG_PATH_KM)
+    return load_json_config(resolve_config_path("linhas_km_config.json"))
 
 def save_km_store(store: dict) -> bool:
-    return save_json_config(CONFIG_PATH_KM, store)
+    return save_json_config(resolve_config_path("linhas_km_config.json"), store)
 
 def append_km_record(store: dict, line: str, inicio: pd.Timestamp, km: float, fim: Optional[pd.Timestamp] = None):
     """Acrescenta uma vigência. Se houver período em aberto, encerra no dia anterior ao novo início."""
@@ -459,10 +504,10 @@ def apply_km_vigente(df_in: pd.DataFrame, store: dict) -> pd.DataFrame:
 # Veículos por linha com vigências (configurados/em operação)
 # ------------------------------
 def load_veic_store() -> dict:
-    return load_json_config(CONFIG_PATH_VEIC)
+    return load_json_config(resolve_config_path("linhas_veic_config.json"))
 
 def save_veic_store(store: dict) -> bool:
-    return save_json_config(CONFIG_PATH_VEIC, store)
+    return save_json_config(resolve_config_path("linhas_veic_config.json"), store)
 
 def append_veic_record(store: dict, line: str, inicio: pd.Timestamp, veic: float, fim: Optional[pd.Timestamp] = None):
     line = str(line)
@@ -541,7 +586,28 @@ st.caption("*Baseado exclusivamente nos dados existentes do arquivo .CSV importa
 # ------------------------------
 if "Nome Linha" in df.columns:
     st.sidebar.header("Classificação de Linhas")
-    cfg_categ = load_json_config(CONFIG_PATH_CATEG)
+    cfg_categ = load_json_config(resolve_config_path("linhas_config.json"))
+
+# Permitir override via upload de JSONs (opcional)
+with st.sidebar.expander("🔧 Parâmetros (JSON)", expanded=False):
+    cfg_upload_categ = st.file_uploader("linhas_config.json", type=["json"], key="upload_categ")
+    cfg_upload_km    = st.file_uploader("linhas_km_config.json", type=["json"], key="upload_km")
+    cfg_upload_veic  = st.file_uploader("linhas_veic_config.json", type=["json"], key="upload_veic")
+    if cfg_upload_categ is not None:
+        try:
+            cfg_categ = json.load(cfg_upload_categ)
+        except Exception as e:
+            st.warning(f"Falha ao ler linhas_config.json enviado: {e}")
+    if "km_store" in locals() and cfg_upload_km is not None:
+        try:
+            km_store = json.load(cfg_upload_km)
+        except Exception as e:
+            st.warning(f"Falha ao ler linhas_km_config.json enviado: {e}")
+    if "veic_store" in locals() and cfg_upload_veic is not None:
+        try:
+            veic_store = json.load(cfg_upload_veic)
+        except Exception as e:
+            st.warning(f"Falha ao ler linhas_veic_config.json enviado: {e}")
     valid_vals = {"Urbana", "Distrital"}
     cfg_categ = {k: (v if v in valid_vals else None) for k, v in cfg_categ.items() if isinstance(k, str)}
     linhas_unicas = sorted([x for x in df["Nome Linha"].dropna().astype(str).unique()])
@@ -562,12 +628,12 @@ if "Nome Linha" in df.columns:
                 for l in sel_distritais:
                     if l not in novo_cfg:
                         novo_cfg[l] = "Distrital"
-                if save_json_config(CONFIG_PATH_CATEG, novo_cfg):
+                if save_json_config(resolve_config_path("linhas_config.json"), novo_cfg):
                     st.success("Classificação salva.")
                     cfg_categ = novo_cfg
         with col_s2:
             if st.button("↩️ Reset (limpar)", use_container_width=True):
-                if save_json_config(CONFIG_PATH_CATEG, {}):
+                if save_json_config(resolve_config_path("linhas_config.json"), {}):
                     st.warning("Classificação removida.")
                     cfg_categ = {}
 
@@ -577,6 +643,21 @@ if "Nome Linha" in df.columns:
 # KM por Linha (vigências) com persistência
 # ------------------------------
 km_store = load_km_store()
+
+# Normaliza km_store se vier como dict simples {linha: km}
+def _normalize_km_store(store: dict) -> dict:
+    out = {}
+    for k, v in store.items():
+        try:
+            k_str = str(k)
+            if isinstance(v, (int, float)):
+                out[k_str] = [{"inicio":"1900-01-01","fim":None,"km": float(v)}]
+            elif isinstance(v, list):
+                out[k_str] = v
+        except Exception:
+            continue
+    return out or store
+km_store = _normalize_km_store(km_store)
 if "Nome Linha" in df.columns:
     with st.sidebar.expander("KM por Linha (vigências)", expanded=False):
         linhas_unicas = sorted([x for x in df["Nome Linha"].dropna().astype(str).unique()])
@@ -626,6 +707,21 @@ df = apply_km_vigente(df, km_store)
 # Veículos por Linha (vigências) com persistência
 # ------------------------------
 veic_store = load_veic_store()
+
+# Normaliza veic_store se vier como dict simples {linha: veiculos}
+def _normalize_veic_store(store: dict) -> dict:
+    out = {}
+    for k, v in store.items():
+        try:
+            k_str = str(k)
+            if isinstance(v, (int, float)):
+                out[k_str] = [{"inicio":"1900-01-01","fim":None,"veiculos": float(v)}]
+            elif isinstance(v, list):
+                out[k_str] = v
+        except Exception:
+            continue
+    return out or store
+veic_store = _normalize_veic_store(veic_store)
 if "Nome Linha" in df.columns:
     with st.sidebar.expander("Veículos por Linha (vigências)", expanded=False):
         linhas_unicas = sorted([x for x in df["Nome Linha"].dropna().astype(str).unique()])
@@ -783,136 +879,61 @@ subsidio_pagante = st.sidebar.number_input("Subsídio por pagante (R$)", min_val
 # KPIs com tendência (deltas)
 # ------------------------------
 
-# Função para formatar delta/tendência dos KPIs (robusta para int/float)
-def trend_delta(atual, anterior, nd_abs=1, nd_pct=1):
-    import math
-    # Trata None, NaN e divisor zero
-    if anterior is None:
-        return ""
-    try:
-        if hasattr(anterior, "isna") and anterior.isna():
-            return ""
-    except Exception:
-        pass
-    if anterior == 0 or (isinstance(anterior, float) and math.isclose(anterior, 0.0, abs_tol=1e-12)):
-        return ""
 
-    try:
-        abs_delta = float(atual) - float(anterior)
-    except Exception:
-        return ""
-
-    # Formatação do delta absoluto respeitando casas decimais quando necessário
-    is_int_like = abs(abs_delta - round(abs_delta)) < 1e-9
-    if is_int_like:
-        abs_fmt = fmt_int(int(round(abs_delta)))
-    else:
-        abs_fmt = fmt_float(abs_delta, nd_abs)
-
-    # Percentual
-    pct_delta = (abs_delta / float(anterior)) * 100.0
-    pct_fmt = fmt_float(pct_delta, nd_pct)
-
-    # Sinal: só adiciona '+' no caso positivo
-    sinal = "+" if abs_delta > 0 else ""
-    return f"{sinal}{abs_fmt} ({sinal}{pct_fmt}%)"
-
-
-# --- Bloco de cálculo do período anterior para tendência nos KPIs ---
-# Requisitos:
-# - Usar o MESMO subconjunto de filtros (linha, veículo, etc.) do df_filtered
-# - Apenas trocar a janela de datas para o período anterior de tamanho equivalente
-import pandas as pd
-
-date_col = "Data Coleta"
-
-# Garante tipo datetime nos dois dataframes (se aplicável)
-if date_col in df.columns and not pd.api.types.is_datetime64_any_dtype(df[date_col]):
-    with pd.option_context("mode.chained_assignment", None):
-        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-
-if date_col in df_filtered.columns and not pd.api.types.is_datetime64_any_dtype(df_filtered[date_col]):
-    with pd.option_context("mode.chained_assignment", None):
-        df_filtered[date_col] = pd.to_datetime(df_filtered[date_col], errors="coerce")
-
-# Calcula a janela atual com base no df_filtered (que representa os filtros do usuário)
-if date_col in df_filtered.columns and df_filtered[date_col].notna().any():
-    data_min = pd.to_datetime(df_filtered[date_col].min())
-    data_max = pd.to_datetime(df_filtered[date_col].max())
-    # Janela em dias (inclusiva)
-    periodo_dias = int((data_max - data_min).days) + 1
-
-    # Período anterior (tamanho idêntico) imediatamente anterior ao data_min
+# Bloco de cálculo do período anterior para tendência nos KPIs
+if "Data Coleta" in df.columns and df["Data Coleta"].notna().any():
+    data_min = pd.to_datetime(df_filtered["Data Coleta"].min())
+    data_max = pd.to_datetime(df_filtered["Data Coleta"].max())
+    periodo_dias = (data_max - data_min).days + 1
     periodo_ant_ini = data_min - pd.Timedelta(days=periodo_dias)
     periodo_ant_fim = data_min - pd.Timedelta(days=1)
-
-    # Reconstrói o mesmo subconjunto do df (antes de aplicar o filtro de data), usando as dimensões presentes no df_filtered
-    # Para isso, usamos colunas-chave comuns de filtro quando existirem
-    filtro_cols_candidatas = [
-        "Nome Linha", "Numero Veiculo", "Placa", "Motorista", "Matricula Motorista",
-        "Empresa", "Consorcio", "Turno", "Sentido"
-    ]
-    filtro_cols = [c for c in filtro_cols_candidatas if c in df.columns and c in df_filtered.columns]
-
-    df_base_mesmos_filtros = df
-    for c in filtro_cols:
-        valores = df_filtered[c].dropna().unique().tolist()
-        if len(valores) > 0 and len(valores) < max(50, len(valores)):  # evita filtro inútil com cardinalidade muito alta desconhecida
-            df_base_mesmos_filtros = df_base_mesmos_filtros[df_base_mesmos_filtros[c].isin(valores)]
-
-    # Agora aplica apenas a janela de datas anterior
-    if date_col in df_base_mesmos_filtros.columns:
-        df_ant = df_base_mesmos_filtros[
-            (df_base_mesmos_filtros[date_col] >= periodo_ant_ini) &
-            (df_base_mesmos_filtros[date_col] <= periodo_ant_fim)
-        ].copy()
-    else:
-        df_ant = pd.DataFrame()
+    df_ant = df[(df["Data Coleta"].dt.date >= periodo_ant_ini.date()) & (df["Data Coleta"].dt.date <= periodo_ant_fim.date())]
 else:
     df_ant = pd.DataFrame()
 
 kpi_cols = st.columns(6)
 
 # Passageiros total
-total_pax = df_filtered["Passageiros"].sum(min_count=1) if "Passageiros" in df_filtered.columns else 0
-total_pax_ant = df_ant["Passageiros"].sum(min_count=1) if (not df_ant.empty and "Passageiros" in df_ant.columns) else None
-kpi_cols[0].metric("👥 Passageiros", fmt_int(total_pax), delta=trend_delta(total_pax, total_pax_ant, nd_abs=0, nd_pct=1))
+total_pax = df_filtered["Passageiros"].sum() if "Passageiros" in df_filtered.columns else 0
+if not df_ant.empty:
+    total_pax_ant = df_ant["Passageiros"].sum() if "Passageiros" in df_ant.columns else 0
+else:
+    total_pax_ant = None
+kpi_cols[0].metric("👥 Passageiros", fmt_int(total_pax), delta=trend_delta(total_pax, total_pax_ant))
 
 # Viagens registradas
 viagens = len(df_filtered)
 viagens_ant = len(df_ant) if not df_ant.empty else None
-kpi_cols[1].metric("🧭 Viagens registradas", fmt_int(viagens), delta=trend_delta(viagens, viagens_ant, nd_abs=0, nd_pct=1))
+kpi_cols[1].metric("🧭 Viagens registradas", fmt_int(viagens), delta=trend_delta(viagens, viagens_ant))
 
 # Distância total (usa distância configurada quando existir)
 if "Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any():
     dist_total = df_filtered["Distancia_cfg_km"].sum(min_count=1)
 else:
-    dist_total = df_filtered["Distancia"].sum(min_count=1) if "Distancia" in df_filtered.columns else 0.0
-
+    dist_total = df_filtered["Distancia"].sum() if "Distancia" in df_filtered.columns else 0.0
 if not df_ant.empty:
     if "Distancia_cfg_km" in df_ant.columns and df_ant["Distancia_cfg_km"].notna().any():
         dist_total_ant = df_ant["Distancia_cfg_km"].sum(min_count=1)
     else:
-        dist_total_ant = df_ant["Distancia"].sum(min_count=1) if "Distancia" in df_ant.columns else 0.0
+        dist_total_ant = df_ant["Distancia"].sum() if "Distancia" in df_ant.columns else 0.0
 else:
     dist_total_ant = None
-
-kpi_cols[2].metric("🛣️ Distância total (km)", fmt_float(dist_total, 1), delta=trend_delta(dist_total, dist_total_ant, nd_abs=1, nd_pct=1))
+kpi_cols[2].metric("🛣️ Distância total (km)", fmt_float(dist_total, 1), delta=trend_delta(dist_total, dist_total_ant, nd=1))
 
 # Média pax/viagem
-media_pax = (float(total_pax) / float(viagens)) if viagens > 0 else 0.0
-media_pax_ant = (float(total_pax_ant) / float(viagens_ant)) if (total_pax_ant is not None and viagens_ant and viagens_ant > 0) else None
-kpi_cols[3].metric("📈 Média pax/viagem", fmt_float(media_pax, 2), delta=trend_delta(media_pax, media_pax_ant, nd_abs=2, nd_pct=2))
+media_pax = (total_pax / viagens) if viagens > 0 else 0.0
+media_pax_ant = (total_pax_ant / viagens_ant) if (total_pax_ant is not None and viagens_ant and viagens_ant > 0) else None
+kpi_cols[3].metric("📈 Média pax/viagem", fmt_float(media_pax, 2), delta=trend_delta(media_pax, media_pax_ant, nd=2))
 
 # Veículos distintos
-veics_ids = df_filtered["Numero Veiculo"].nunique(dropna=True) if "Numero Veiculo" in df_filtered.columns else 0
-veics_ids_ant = df_ant["Numero Veiculo"].nunique(dropna=True) if (not df_ant.empty and "Numero Veiculo" in df_ant.columns) else None
-kpi_cols[4].metric("🚌 Veículos (IDs distintos)", fmt_int(veics_ids), delta=trend_delta(veics_ids, veics_ids_ant, nd_abs=0, nd_pct=1))
+veics_ids = df_filtered["Numero Veiculo"].nunique() if "Numero Veiculo" in df_filtered.columns else 0
+veics_ids_ant = df_ant["Numero Veiculo"].nunique() if not df_ant.empty and "Numero Veiculo" in df_ant.columns else None
+kpi_cols[4].metric("🚌 Veículos (IDs distintos)", fmt_int(veics_ids), delta=trend_delta(veics_ids, veics_ids_ant))
 
 # Linhas ativas
-linhas_ativas = df_filtered["Nome Linha"].nunique(dropna=True) if "Nome Linha" in df_filtered.columns else 0
-linhas_ativas_ant = df_ant["Nome Linha"].nunique(dropna=True) if (not df_ant.empty and "Nome Linha" in df_ant.columns) else None
-kpi_cols[5].metric("🧵 Linhas ativas", fmt_int(linhas_ativas), delta=trend_delta(linhas_ativas, linhas_ativas_ant, nd_abs=0, nd_pct=1))
+linhas_ativas = df_filtered["Nome Linha"].nunique() if "Nome Linha" in df_filtered.columns else 0
+linhas_ativas_ant = df_ant["Nome Linha"].nunique() if not df_ant.empty and "Nome Linha" in df_ant.columns else None
+kpi_cols[5].metric("🧵 Linhas ativas", fmt_int(linhas_ativas), delta=trend_delta(linhas_ativas, linhas_ativas_ant))
 
 # ... (todo o restante do código permanece igual)
 # --- Financeiro (com base nas colunas existentes) ---
@@ -933,64 +954,14 @@ pax_total_calc = float(total_pax) if pd.notna(total_pax) else 0.0
 custo_publico_por_pax_total = (subsidio_total / pax_total_calc) if pax_total_calc > 0 else 0.0
 
 st.subheader("💰 Indicadores financeiros (parâmetros na barra lateral)")
-
-# Tendências: calcula valores do período anterior
-try:
-    paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
-    integration_cols_all = ["Quant Passagem Integracao","Quant Passe Integracao","Quant Vale Transporte Integracao"]
-    present_paying_ant = [c for c in paying_cols_all if (not df_ant.empty and c in df_ant.columns)]
-    present_integration_ant = [c for c in integration_cols_all if (not df_ant.empty and c in df_ant.columns)]
-
-    total_pagantes_ant = float(df_ant[present_paying_ant].sum().sum()) if present_paying_ant else 0.0
-    total_integracoes_ant = float(df_ant[present_integration_ant].sum().sum()) if present_integration_ant else 0.0
-    total_gratuidade_ant = float(df_ant["Quant Gratuidade"].sum()) if ((not df_ant.empty) and ("Quant Gratuidade" in df_ant.columns)) else 0.0
-
-    receita_tarifaria_ant = total_pagantes_ant * float(tarifa_usuario)
-    subsidio_total_ant = total_pagantes_ant * float(subsidio_pagante)
-    receita_total_ant = receita_tarifaria_ant + subsidio_total_ant
-
-    pax_total_calc_ant = float(total_pax_ant) if (total_pax_ant is not None) else 0.0
-    custo_publico_por_pax_total_ant = (subsidio_total_ant / pax_total_calc_ant) if pax_total_calc_ant > 0 else None
-except Exception:
-    total_pagantes_ant = None
-    total_integracoes_ant = None
-    total_gratuidade_ant = None
-    receita_tarifaria_ant = None
-    subsidio_total_ant = None
-    receita_total_ant = None
-    custo_publico_por_pax_total_ant = None
-
-# KPIs Financeiros com tendências
-try:
-    paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
-    integration_cols_all = ["Quant Passagem Integracao","Quant Passe Integracao","Quant Vale Transporte Integracao"]
-    present_paying_ant = [c for c in paying_cols_all if (not df_ant.empty and c in df_ant.columns)]
-    present_integration_ant = [c for c in integration_cols_all if (not df_ant.empty and c in df_ant.columns)]
-    total_pagantes_ant = float(df_ant[present_paying_ant].sum().sum()) if present_paying_ant else 0.0
-    total_integracoes_ant = float(df_ant[present_integration_ant].sum().sum()) if present_integration_ant else 0.0
-    total_gratuidade_ant = float(df_ant["Quant Gratuidade"].sum()) if ((not df_ant.empty) and ("Quant Gratuidade" in df_ant.columns)) else 0.0
-    receita_tarifaria_ant = total_pagantes_ant * float(tarifa_usuario)
-    subsidio_total_ant = total_pagantes_ant * float(subsidio_pagante)
-    receita_total_ant = receita_tarifaria_ant + subsidio_total_ant
-    pax_total_calc_ant = float(total_pax_ant) if (total_pax_ant is not None) else 0.0
-    custo_publico_por_pax_total_ant = (subsidio_total_ant / pax_total_calc_ant) if pax_total_calc_ant > 0 else None
-except Exception:
-    total_pagantes_ant = None
-    total_integracoes_ant = None
-    total_gratuidade_ant = None
-    receita_tarifaria_ant = None
-    subsidio_total_ant = None
-    receita_total_ant = None
-    custo_publico_por_pax_total_ant = None
-
 fin_cols = st.columns(7)
-fin_cols[0].metric("Pagantes", fmt_int(total_pagantes), delta=trend_delta(total_pagantes, total_pagantes_ant, nd_abs=0, nd_pct=1))
-fin_cols[1].metric("Integrações (sem custo)", fmt_int(total_integracoes), delta=trend_delta(total_integracoes, total_integracoes_ant, nd_abs=0, nd_pct=1))
-fin_cols[2].metric("Gratuidades", fmt_int(total_gratuidade), delta=trend_delta(total_gratuidade, total_gratuidade_ant, nd_abs=0, nd_pct=1))
-fin_cols[3].metric("Receita tarifária", fmt_currency(receita_tarifaria, 2), delta=trend_delta(receita_tarifaria, receita_tarifaria_ant, nd_abs=2, nd_pct=1))
-fin_cols[4].metric("Subsídio total", fmt_currency(subsidio_total, 2), delta=trend_delta(subsidio_total, subsidio_total_ant, nd_abs=2, nd_pct=1))
-fin_cols[5].metric("Custo público/pax", fmt_currency(custo_publico_por_pax_total, 2), delta=trend_delta(custo_publico_por_pax_total, custo_publico_por_pax_total_ant, nd_abs=2, nd_pct=1))
-fin_cols[6].metric("Receita total", fmt_currency(receita_total, 2), delta=trend_delta(receita_total, receita_total_ant, nd_abs=2, nd_pct=1))
+fin_cols[0].metric("Pagantes", fmt_int(total_pagantes))
+fin_cols[1].metric("Integrações (sem custo)", fmt_int(total_integracoes))
+fin_cols[2].metric("Gratuidades", fmt_int(total_gratuidade))
+fin_cols[3].metric("Receita tarifária", fmt_currency(receita_tarifaria, 2))
+fin_cols[4].metric("Subsídio total", fmt_currency(subsidio_total, 2))
+fin_cols[5].metric("Custo público/pax", fmt_currency(custo_publico_por_pax_total, 2))
+fin_cols[6].metric("Receita total", fmt_currency(receita_total, 2))
 
 # ---------- NOVOS INDICADORES ----------
 # IPK (passageiros por km)
@@ -1013,63 +984,22 @@ receita_por_veic_cfg = (receita_total / veic_cfg_total_medio) if veic_cfg_total_
 # Médias por veículo configurado
 viagens_por_veic = (viagens / veic_cfg_total_medio) if veic_cfg_total_medio and veic_cfg_total_medio > 0 else 0.0
 km_por_veic      = (dist_total / veic_cfg_total_medio) if veic_cfg_total_medio and veic_cfg_total_medio > 0 else 0.0
-pax_por_veic     = (total_pax / veic_cfg_total_medio)  if veic_cfg_total_medio and veic_cfg_total_medio > 0 else 0.0# Bloco de KPIs adicionais
-# ---------- Valores anteriores (para tendências) ----------
-# Reutiliza df_ant (período anterior com mesmos filtros) e variáveis anteriores já calculadas:
-# total_pax_ant, dist_total_ant, viagens_ant
-try:
-    # Totais pagantes no período anterior
-    paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
-    present_paying_ant = [c for c in paying_cols_all if (not df_ant.empty and c in df_ant.columns)]
-    total_pagantes_ant = float(df_ant[present_paying_ant].sum().sum()) if present_paying_ant else 0.0
+pax_por_veic     = (total_pax / veic_cfg_total_medio)  if veic_cfg_total_medio and veic_cfg_total_medio > 0 else 0.0
 
-    # Receita total no período anterior (tarifa + subsídio)
-    receita_tarifaria_ant = total_pagantes_ant * float(tarifa_usuario)
-    subsidio_total_ant = total_pagantes_ant * float(subsidio_pagante)
-    receita_total_ant = receita_tarifaria_ant + subsidio_total_ant
-
-    # Veículos configurados médios no período anterior
-    if (not df_ant.empty) and ("Veiculos_cfg" in df_ant.columns) and df_ant["Veiculos_cfg"].notna().any():
-        veic_cfg_por_linha_ant = df_ant.groupby("Nome Linha", observed=False)["Veiculos_cfg"].mean(numeric_only=True)
-        veic_cfg_total_medio_ant = veic_cfg_por_linha_ant.sum()
-    else:
-        veic_cfg_total_medio_ant = 0.0
-except Exception:
-    total_pagantes_ant = None
-    receita_total_ant = None
-    veic_cfg_total_medio_ant = 0.0
-
-# ---------- Indicadores atuais (já existentes) ----------
+# Bloco de KPIs adicionais
 st.subheader("🚀 Indicadores avançados")
 colA, colB, colC, colD, colE = st.columns(5)
-
-# Tendências: calcula equivalentes do período anterior
-ipk_total_ant      = (float(total_pax_ant) / float(dist_total_ant)) if (total_pax_ant is not None and dist_total_ant not in (None, 0)) else None
-ipk_pagantes_ant   = (float(total_pagantes_ant) / float(dist_total_ant)) if (total_pagantes_ant is not None and dist_total_ant not in (None, 0)) else None
-receita_por_km_ant = (float(receita_total_ant) / float(dist_total_ant)) if (receita_total_ant is not None and dist_total_ant not in (None, 0)) else None
-
-# Exibição com delta
-colA.metric("IPK total (pax/km)", fmt_float(ipk_total, 3), delta=trend_delta(ipk_total, ipk_total_ant, nd_abs=3, nd_pct=1))
-colB.metric("IPK pagantes (pax/km)", fmt_float(ipk_pagantes, 3), delta=trend_delta(ipk_pagantes, ipk_pagantes_ant, nd_abs=3, nd_pct=1))
-colC.metric("Receita por km", fmt_currency(receita_por_km, 2), delta=trend_delta(receita_por_km, receita_por_km_ant, nd_abs=2, nd_pct=1))
-
-# Veículos e receitas médias por veículo configurado
-colD.metric("Veículos configurados (média)", fmt_float(veic_cfg_total_medio, 2), delta=trend_delta(veic_cfg_total_medio, veic_cfg_total_medio_ant, nd_abs=2, nd_pct=1))
-
-# Receita por veículo no período anterior
-receita_por_veic_cfg_ant = (float(receita_total_ant) / float(veic_cfg_total_medio_ant)) if (receita_total_ant is not None and veic_cfg_total_medio_ant not in (None, 0)) else None
-colE.metric("Receita por veículo", fmt_currency(receita_por_veic_cfg, 2), delta=trend_delta(receita_por_veic_cfg, receita_por_veic_cfg_ant, nd_abs=2, nd_pct=1))
+colA.metric("IPK total (pax/km)", fmt_float(ipk_total, 3))
+colB.metric("IPK pagantes (pax/km)", fmt_float(ipk_pagantes, 3))
+colC.metric("Receita por km", fmt_currency(receita_por_km, 2))
+colD.metric("Veículos configurados (média)", fmt_float(veic_cfg_total_medio, 2))
+colE.metric("Receita por veículo", fmt_currency(receita_por_veic_cfg, 2))
 
 # KPIs médios por veículo
 colF, colG, colH = st.columns(3)
-viagens_por_veic_ant = (float(viagens_ant) / float(veic_cfg_total_medio_ant)) if (viagens_ant is not None and veic_cfg_total_medio_ant not in (None, 0)) else None
-km_por_veic_ant      = (float(dist_total_ant) / float(veic_cfg_total_medio_ant)) if (dist_total_ant not in (None, 0) and veic_cfg_total_medio_ant not in (None, 0)) else None
-pax_por_veic_ant     = (float(total_pax_ant) / float(veic_cfg_total_medio_ant)) if (total_pax_ant is not None and veic_cfg_total_medio_ant not in (None, 0)) else None
-
-colF.metric("Viagens por veículo", fmt_float(viagens_por_veic, 2), delta=trend_delta(viagens_por_veic, viagens_por_veic_ant, nd_abs=2, nd_pct=1))
-colG.metric("KM por veículo", fmt_float(km_por_veic, 2), delta=trend_delta(km_por_veic, km_por_veic_ant, nd_abs=2, nd_pct=1))
-colH.metric("Passageiros por veículo", fmt_float(pax_por_veic, 2), delta=trend_delta(pax_por_veic, pax_por_veic_ant, nd_abs=2, nd_pct=1))
-
+colF.metric("Viagens por veículo", fmt_float(viagens_por_veic, 2))
+colG.metric("KM por veículo", fmt_float(km_por_veic, 2))
+colH.metric("Passageiros por veículo", fmt_float(pax_por_veic, 2))
 
 # ------------------------------
 # Gráficos
@@ -1090,152 +1020,110 @@ for cc in ["Cobrador/Operador", "Matricula"]:
 if motorista_col is None:
     st.info("Não encontrei colunas de motorista (ex.: 'Cobrador/Operador' ou 'Matricula').")
 else:
-        # Agregações por motorista
-        dist_col_drv = "Distancia_cfg_km" if ("Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in df_filtered.columns else None)
-        grp_m = df_filtered.groupby(motorista_col, observed=False)
+    # Agregações por motorista
+    dist_col_drv = "Distancia_cfg_km" if ("Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in df_filtered.columns else None)
+    grp_m = df_filtered.groupby(motorista_col, observed=False)
 
-        viagens_m = grp_m.size().rename("Viagens")
-        pax_m = grp_m["Passageiros"].sum(numeric_only=True) if "Passageiros" in df_filtered.columns else pd.Series(0, index=viagens_m.index)
-        km_m = grp_m[dist_col_drv].sum(numeric_only=True) if dist_col_drv else pd.Series(0.0, index=viagens_m.index)
+    viagens_m = grp_m.size().rename("Viagens")
+    pax_m = grp_m["Passageiros"].sum(numeric_only=True) if "Passageiros" in df_filtered.columns else pd.Series(0, index=viagens_m.index)
+    km_m = grp_m[dist_col_drv].sum(numeric_only=True) if dist_col_drv else pd.Series(0.0, index=viagens_m.index)
 
-        paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
-        present_paying_m = [c for c in paying_cols_all if c in df_filtered.columns]
-        if present_paying_m:
-            pag_df = grp_m[present_paying_m].sum(numeric_only=True)
-            pag_m = pag_df.sum(axis=1)
+    paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
+    present_paying_m = [c for c in paying_cols_all if c in df_filtered.columns]
+    if present_paying_m:
+        pag_df = grp_m[present_paying_m].sum(numeric_only=True)
+        pag_m = pag_df.sum(axis=1)
+    else:
+        pag_m = pd.Series(0.0, index=viagens_m.index)
+
+    receita_m = pag_m * (float(tarifa_usuario) + float(subsidio_pagante))
+
+    # ---------- NOVO: Aproveitamento (horas trabalhadas vs carga diária 7:20) ----------
+    REF_HOURS = 7 + 20/60  # 7h20 = 7.333...
+    start_col = "Data Hora Inicio Operacao" if "Data Hora Inicio Operacao" in df_filtered.columns else None
+    end_col   = "Data Hora Final Operacao" if "Data Hora Final Operacao" in df_filtered.columns else None
+
+    util_df = pd.DataFrame()
+    if start_col and end_col:
+        tmp = df_filtered[[motorista_col, start_col, end_col]].copy()
+        tmp["dur_h"] = (pd.to_datetime(tmp[end_col], errors="coerce") - pd.to_datetime(tmp[start_col], errors="coerce")).dt.total_seconds() / 3600.0
+        # remove negativos/zeros
+        tmp.loc[(tmp["dur_h"] <= 0) | ~np.isfinite(tmp["dur_h"]), "dur_h"] = np.nan
+        # dia de referência (do início); fallback para Data Coleta
+        if "Data Coleta" in df_filtered.columns:
+            tmp["dia_ref"] = pd.to_datetime(df_filtered["Data Coleta"], errors="coerce").dt.date
         else:
-            pag_m = pd.Series(0.0, index=viagens_m.index)
+            tmp["dia_ref"] = pd.to_datetime(df_filtered[start_col], errors="coerce").dt.date
+        util_grp = tmp.dropna(subset=["dur_h"]).groupby([motorista_col, "dia_ref"], observed=False)["dur_h"].sum().reset_index()
+        horas_por_motorista = util_grp.groupby(motorista_col, observed=False)["dur_h"].sum()
+        dias_por_motorista = util_grp.groupby(motorista_col, observed=False)["dia_ref"].nunique()
+        aproveitamento_pct = horas_por_motorista / (dias_por_motorista * REF_HOURS)
+        aproveitamento_pct = aproveitamento_pct.replace([np.inf, -np.inf], np.nan)
+    else:
+        horas_por_motorista = pd.Series(dtype=float)
+        dias_por_motorista = pd.Series(dtype=float)
+        aproveitamento_pct = pd.Series(dtype=float)
 
-        receita_m = pag_m * (float(tarifa_usuario) + float(subsidio_pagante))
+    # KPIs médios por motorista (sobre o conjunto filtrado)
+    n_motoristas = len(viagens_m.index)
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Motoristas distintos", fmt_int(n_motoristas))
+    k2.metric("Média de viagens/motorista", fmt_float((viagens / n_motoristas) if n_motoristas else 0, 2))
+    k3.metric("Média de pax/motorista", fmt_float((total_pax / n_motoristas) if n_motoristas else 0, 2))
+    k4.metric("Média de km/motorista", fmt_float((dist_total / n_motoristas) if n_motoristas else 0, 2))
+    k5.metric("Média de receita/motorista", fmt_currency((receita_total / n_motoristas) if n_motoristas else 0, 2))
 
-        # ---------- NOVO: Aproveitamento (horas trabalhadas vs carga diária 7:20) ----------
-        REF_HOURS = 7 + 20/60  # 7h20 = 7.333...
-        start_col = "Data Hora Inicio Operacao" if "Data Hora Inicio Operacao" in df_filtered.columns else None
-        end_col   = "Data Hora Final Operacao" if "Data Hora Final Operacao" in df_filtered.columns else None
+    # Bloco de aproveitamento agregado
+    st.markdown("**Aproveitamento (horas trabalhadas ÷ 7:20 por dia)**")
+    if not aproveitamento_pct.empty:
+        media_aprov = float(np.nanmean(aproveitamento_pct.values)) if len(aproveitamento_pct) else np.nan
+        pct_full = float(np.mean(aproveitamento_pct >= 1.0)) if len(aproveitamento_pct) else 0.0
+        pct_baixo = float(np.mean(aproveitamento_pct <= 0.8)) if len(aproveitamento_pct) else 0.0
+        a1, a2, a3 = st.columns(3)
+        a1.metric("Média de aproveitamento", fmt_pct(media_aprov, 1))
+        a2.metric("% motoristas ≥ 100%", fmt_pct(pct_full, 1))
+        a3.metric("% motoristas ≤ 80%", fmt_pct(pct_baixo, 1))
+    else:
+        st.info("Para calcular o aproveitamento, são necessários 'Data Hora Inicio Operacao' e 'Data Hora Final Operacao'.")
 
-        util_df = pd.DataFrame()
-        if start_col and end_col:
-            tmp = df_filtered[[motorista_col, start_col, end_col]].copy()
-            tmp["dur_h"] = (pd.to_datetime(tmp[end_col], errors="coerce") - pd.to_datetime(tmp[start_col], errors="coerce")).dt.total_seconds() / 3600.0
-            # remove negativos/zeros
-            tmp.loc[(tmp["dur_h"] <= 0) | ~np.isfinite(tmp["dur_h"]), "dur_h"] = np.nan
-            # dia de referência (do início); fallback para Data Coleta
-            if "Data Coleta" in df_filtered.columns:
-                tmp["dia_ref"] = pd.to_datetime(df_filtered["Data Coleta"], errors="coerce").dt.date
-            else:
-                tmp["dia_ref"] = pd.to_datetime(df_filtered[start_col], errors="coerce").dt.date
-            util_grp = tmp.dropna(subset=["dur_h"]).groupby([motorista_col, "dia_ref"], observed=False)["dur_h"].sum().reset_index()
-            horas_por_motorista = util_grp.groupby(motorista_col, observed=False)["dur_h"].sum()
-            dias_por_motorista = util_grp.groupby(motorista_col, observed=False)["dia_ref"].nunique()
-            aproveitamento_pct = horas_por_motorista / (dias_por_motorista * REF_HOURS)
-            aproveitamento_pct = aproveitamento_pct.replace([np.inf, -np.inf], np.nan)
-        else:
-            horas_por_motorista = pd.Series(dtype=float)
-            dias_por_motorista = pd.Series(dtype=float)
-            aproveitamento_pct = pd.Series(dtype=float)
+    # Rankings
+    st.markdown("**Rankings por motorista (Top 20)**")
+    colM1, colM2, colM3, colM4, colM5 = st.columns(5)
 
-        # KPIs médios por motorista (sobre o conjunto filtrado)
-        n_motoristas = len(viagens_m.index)
-        k1, k2, k3, k4, k5 = st.columns(5)
+    with colM1:
+        top_pax = pd.DataFrame({"Motorista": pax_m.index, "Passageiros": pax_m.values}).sort_values("Passageiros", ascending=False).head(20)
+        top_pax["Passageiros"] = top_pax["Passageiros"].apply(fmt_int)
+        st.caption("Mais passageiros")
+        st.dataframe(top_pax, use_container_width=True)
 
-        # Valores anteriores equivalentes para deltas
-        try:
-            if (not df_ant.empty) and (motorista_col in df_ant.columns):
-                n_motoristas_ant = int(df_ant[motorista_col].nunique(dropna=True))
-            else:
-                n_motoristas_ant = None
-        except Exception:
-            n_motoristas_ant = None
+    with colM2:
+        top_viag = pd.DataFrame({"Motorista": viagens_m.index, "Viagens": viagens_m.values}).sort_values("Viagens", ascending=False).head(20)
+        top_viag["Viagens"] = top_viag["Viagens"].apply(fmt_int)
+        st.caption("Mais viagens")
+        st.dataframe(top_viag, use_container_width=True)
 
-        media_viag_mot_ant   = (float(viagens_ant) / float(n_motoristas_ant)) if (viagens_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
-        media_pax_mot_ant    = (float(total_pax_ant) / float(n_motoristas_ant)) if (total_pax_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
-        media_km_mot_ant     = (float(dist_total_ant) / float(n_motoristas_ant)) if (dist_total_ant not in (None, 0) and n_motoristas_ant and n_motoristas_ant > 0) else None
-        media_rec_mot_ant    = (float(receita_total_ant) / float(n_motoristas_ant)) if (receita_total_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
+    with colM3:
+        top_km = pd.DataFrame({"Motorista": km_m.index, "KM": km_m.values}).sort_values("KM", ascending=False).head(20)
+        top_km["KM"] = top_km["KM"].apply(lambda v: fmt_float(v, 1))
+        st.caption("Mais KM")
+        st.dataframe(top_km, use_container_width=True)
 
-        k1.metric("Motoristas distintos", fmt_int(n_motoristas), delta=trend_delta(n_motoristas, n_motoristas_ant, nd_abs=0, nd_pct=1))
-        k2.metric("Média de viagens/motorista", fmt_float((viagens / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((viagens / n_motoristas) if n_motoristas else 0, media_viag_mot_ant, nd_abs=2, nd_pct=1))
-        k3.metric("Média de pax/motorista", fmt_float((total_pax / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((total_pax / n_motoristas) if n_motoristas else 0, media_pax_mot_ant, nd_abs=2, nd_pct=1))
-        k4.metric("Média de km/motorista", fmt_float((dist_total / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((dist_total / n_motoristas) if n_motoristas else 0, media_km_mot_ant, nd_abs=2, nd_pct=1))
-        k5.metric("Média de receita/motorista", fmt_currency((receita_total / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((receita_total / n_motoristas) if n_motoristas else 0, media_rec_mot_ant, nd_abs=2, nd_pct=1))
+    with colM4:
+        top_rec = pd.DataFrame({"Motorista": receita_m.index, "Receita": receita_m.values}).sort_values("Receita", ascending=False).head(20)
+        top_rec["Receita"] = top_rec["Receita"].apply(lambda v: fmt_currency(v, 2))
+        st.caption("Mais receita")
+        st.dataframe(top_rec, use_container_width=True)
 
-        # Bloco de aproveitamento agregado
-        st.markdown("**Aproveitamento (horas trabalhadas ÷ 7:20 por dia)**")
+    with colM5:
         if not aproveitamento_pct.empty:
-            media_aprov = float(np.nanmean(aproveitamento_pct.values)) if len(aproveitamento_pct) else np.nan
-            pct_full = float(np.mean(aproveitamento_pct >= 1.0)) if len(aproveitamento_pct) else 0.0
-            pct_baixo = float(np.mean(aproveitamento_pct <= 0.8)) if len(aproveitamento_pct) else 0.0
-            a1, a2, a3 = st.columns(3)
-            # Valores do período anterior para aproveitamento
-            try:
-                aproveitamento_pct_ant = pd.Series(dtype=float)
-                if (not df_ant.empty) and (motorista_col in df_ant.columns):
-                    tmp = df_ant.copy()
-                    if start_col and end_col and (start_col in tmp.columns) and (end_col in tmp.columns):
-                        di = pd.to_datetime(tmp[start_col], errors="coerce")
-                        df_ = pd.to_datetime(tmp[end_col], errors="coerce")
-                        tmp["dur_h"] = (df_ - di).dt.total_seconds() / 3600.0
-                    else:
-                        tmp["dur_h"] = np.nan
-                    if date_col in tmp.columns:
-                        tmp["dia_ref"] = pd.to_datetime(tmp[date_col], errors="coerce").dt.date
-                    else:
-                        tmp["dia_ref"] = pd.NaT
-                    util_grp_ant = tmp.dropna(subset=["dur_h"]).groupby([motorista_col, "dia_ref"], observed=False)["dur_h"].sum().reset_index()
-                    horas_por_motorista_ant = util_grp_ant.groupby(motorista_col, observed=False)["dur_h"].sum()
-                    dias_por_motorista_ant = util_grp_ant.groupby(motorista_col, observed=False)["dia_ref"].nunique()
-                    aproveitamento_pct_ant = horas_por_motorista_ant / (dias_por_motorista_ant * REF_HOURS)
-                    aproveitamento_pct_ant = aproveitamento_pct_ant.replace([np.inf, -np.inf], np.nan)
-                media_aprov_ant = float(np.nanmean(aproveitamento_pct_ant.values)) if len(aproveitamento_pct_ant) else None
-                pct_full_ant = float(np.mean(aproveitamento_pct_ant >= 1.0)) if len(aproveitamento_pct_ant) else None
-                pct_baixo_ant = float(np.mean(aproveitamento_pct_ant <= 0.8)) if len(aproveitamento_pct_ant) else None
-            except Exception:
-                media_aprov_ant = None
-                pct_full_ant = None
-                pct_baixo_ant = None
-            a1.metric("Média de aproveitamento", fmt_pct(media_aprov, 1), delta=trend_delta(media_aprov, media_aprov_ant, nd_abs=2, nd_pct=1))
-            a2.metric("% motoristas ≥ 100%", fmt_pct(pct_full, 1), delta=trend_delta(pct_full, pct_full_ant, nd_abs=2, nd_pct=1))
-            a3.metric("% motoristas ≤ 80%", fmt_pct(pct_baixo, 1), delta=trend_delta(pct_baixo, pct_baixo_ant, nd_abs=2, nd_pct=1))
+            top_aprov = aproveitamento_pct.sort_values(ascending=False).head(20).reset_index()
+            top_aprov.columns = ["Motorista", "Aproveitamento"]
+            top_aprov["Aproveitamento"] = top_aprov["Aproveitamento"].apply(lambda v: fmt_pct(v, 1))
+            st.caption("Maior aproveitamento")
+            st.dataframe(top_aprov, use_container_width=True)
         else:
-            st.info("Para calcular o aproveitamento, são necessários 'Data Hora Inicio Operacao' e 'Data Hora Final Operacao'.")
-
-        # Rankings
-        st.markdown("**Rankings por motorista (Top 20)**")
-        colM1, colM2, colM3, colM4, colM5 = st.columns(5)
-
-        with colM1:
-            top_pax = pd.DataFrame({"Motorista": pax_m.index, "Passageiros": pax_m.values}).sort_values("Passageiros", ascending=False).head(20)
-            top_pax["Passageiros"] = top_pax["Passageiros"].apply(fmt_int)
-            st.caption("Mais passageiros")
-            st.dataframe(top_pax, use_container_width=True)
-
-        with colM2:
-            top_viag = pd.DataFrame({"Motorista": viagens_m.index, "Viagens": viagens_m.values}).sort_values("Viagens", ascending=False).head(20)
-            top_viag["Viagens"] = top_viag["Viagens"].apply(fmt_int)
-            st.caption("Mais viagens")
-            st.dataframe(top_viag, use_container_width=True)
-
-        with colM3:
-            top_km = pd.DataFrame({"Motorista": km_m.index, "KM": km_m.values}).sort_values("KM", ascending=False).head(20)
-            top_km["KM"] = top_km["KM"].apply(lambda v: fmt_float(v, 1))
-            st.caption("Mais KM")
-            st.dataframe(top_km, use_container_width=True)
-
-        with colM4:
-            top_rec = pd.DataFrame({"Motorista": receita_m.index, "Receita": receita_m.values}).sort_values("Receita", ascending=False).head(20)
-            top_rec["Receita"] = top_rec["Receita"].apply(lambda v: fmt_currency(v, 2))
-            st.caption("Mais receita")
-            st.dataframe(top_rec, use_container_width=True)
-
-        with colM5:
-            if not aproveitamento_pct.empty:
-                top_aprov = aproveitamento_pct.sort_values(ascending=False).head(20).reset_index()
-                top_aprov.columns = ["Motorista", "Aproveitamento"]
-                top_aprov["Aproveitamento"] = top_aprov["Aproveitamento"].apply(lambda v: fmt_pct(v, 1))
-                st.caption("Maior aproveitamento")
-                st.dataframe(top_aprov, use_container_width=True)
-            else:
-                st.caption("Maior aproveitamento")
-                st.info("Sem dados suficientes para o ranking de aproveitamento.")
+            st.caption("Maior aproveitamento")
+            st.info("Sem dados suficientes para o ranking de aproveitamento.")
 
 
 # ------------------------------
