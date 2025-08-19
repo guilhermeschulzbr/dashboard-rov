@@ -963,22 +963,63 @@ receita_por_veic_cfg = (receita_total / veic_cfg_total_medio) if veic_cfg_total_
 # Médias por veículo configurado
 viagens_por_veic = (viagens / veic_cfg_total_medio) if veic_cfg_total_medio and veic_cfg_total_medio > 0 else 0.0
 km_por_veic      = (dist_total / veic_cfg_total_medio) if veic_cfg_total_medio and veic_cfg_total_medio > 0 else 0.0
-pax_por_veic     = (total_pax / veic_cfg_total_medio)  if veic_cfg_total_medio and veic_cfg_total_medio > 0 else 0.0
+pax_por_veic     = (total_pax / veic_cfg_total_medio)  if veic_cfg_total_medio and veic_cfg_total_medio > 0 else 0.0# Bloco de KPIs adicionais
+# ---------- Valores anteriores (para tendências) ----------
+# Reutiliza df_ant (período anterior com mesmos filtros) e variáveis anteriores já calculadas:
+# total_pax_ant, dist_total_ant, viagens_ant
+try:
+    # Totais pagantes no período anterior
+    paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
+    present_paying_ant = [c for c in paying_cols_all if (not df_ant.empty and c in df_ant.columns)]
+    total_pagantes_ant = float(df_ant[present_paying_ant].sum().sum()) if present_paying_ant else 0.0
 
-# Bloco de KPIs adicionais
+    # Receita total no período anterior (tarifa + subsídio)
+    receita_tarifaria_ant = total_pagantes_ant * float(tarifa_usuario)
+    subsidio_total_ant = total_pagantes_ant * float(subsidio_pagante)
+    receita_total_ant = receita_tarifaria_ant + subsidio_total_ant
+
+    # Veículos configurados médios no período anterior
+    if (not df_ant.empty) and ("Veiculos_cfg" in df_ant.columns) and df_ant["Veiculos_cfg"].notna().any():
+        veic_cfg_por_linha_ant = df_ant.groupby("Nome Linha", observed=False)["Veiculos_cfg"].mean(numeric_only=True)
+        veic_cfg_total_medio_ant = veic_cfg_por_linha_ant.sum()
+    else:
+        veic_cfg_total_medio_ant = 0.0
+except Exception:
+    total_pagantes_ant = None
+    receita_total_ant = None
+    veic_cfg_total_medio_ant = 0.0
+
+# ---------- Indicadores atuais (já existentes) ----------
 st.subheader("🚀 Indicadores avançados")
 colA, colB, colC, colD, colE = st.columns(5)
-colA.metric("IPK total (pax/km)", fmt_float(ipk_total, 3))
-colB.metric("IPK pagantes (pax/km)", fmt_float(ipk_pagantes, 3))
-colC.metric("Receita por km", fmt_currency(receita_por_km, 2))
-colD.metric("Veículos configurados (média)", fmt_float(veic_cfg_total_medio, 2))
-colE.metric("Receita por veículo", fmt_currency(receita_por_veic_cfg, 2))
+
+# Tendências: calcula equivalentes do período anterior
+ipk_total_ant      = (float(total_pax_ant) / float(dist_total_ant)) if (total_pax_ant is not None and dist_total_ant not in (None, 0)) else None
+ipk_pagantes_ant   = (float(total_pagantes_ant) / float(dist_total_ant)) if (total_pagantes_ant is not None and dist_total_ant not in (None, 0)) else None
+receita_por_km_ant = (float(receita_total_ant) / float(dist_total_ant)) if (receita_total_ant is not None and dist_total_ant not in (None, 0)) else None
+
+# Exibição com delta
+colA.metric("IPK total (pax/km)", fmt_float(ipk_total, 3), delta=trend_delta(ipk_total, ipk_total_ant, nd_abs=3, nd_pct=1))
+colB.metric("IPK pagantes (pax/km)", fmt_float(ipk_pagantes, 3), delta=trend_delta(ipk_pagantes, ipk_pagantes_ant, nd_abs=3, nd_pct=1))
+colC.metric("Receita por km", fmt_currency(receita_por_km, 2), delta=trend_delta(receita_por_km, receita_por_km_ant, nd_abs=2, nd_pct=1))
+
+# Veículos e receitas médias por veículo configurado
+colD.metric("Veículos configurados (média)", fmt_float(veic_cfg_total_medio, 2), delta=trend_delta(veic_cfg_total_medio, veic_cfg_total_medio_ant, nd_abs=2, nd_pct=1))
+
+# Receita por veículo no período anterior
+receita_por_veic_cfg_ant = (float(receita_total_ant) / float(veic_cfg_total_medio_ant)) if (receita_total_ant is not None and veic_cfg_total_medio_ant not in (None, 0)) else None
+colE.metric("Receita por veículo", fmt_currency(receita_por_veic_cfg, 2), delta=trend_delta(receita_por_veic_cfg, receita_por_veic_cfg_ant, nd_abs=2, nd_pct=1))
 
 # KPIs médios por veículo
 colF, colG, colH = st.columns(3)
-colF.metric("Viagens por veículo", fmt_float(viagens_por_veic, 2))
-colG.metric("KM por veículo", fmt_float(km_por_veic, 2))
-colH.metric("Passageiros por veículo", fmt_float(pax_por_veic, 2))
+viagens_por_veic_ant = (float(viagens_ant) / float(veic_cfg_total_medio_ant)) if (viagens_ant is not None and veic_cfg_total_medio_ant not in (None, 0)) else None
+km_por_veic_ant      = (float(dist_total_ant) / float(veic_cfg_total_medio_ant)) if (dist_total_ant not in (None, 0) and veic_cfg_total_medio_ant not in (None, 0)) else None
+pax_por_veic_ant     = (float(total_pax_ant) / float(veic_cfg_total_medio_ant)) if (total_pax_ant is not None and veic_cfg_total_medio_ant not in (None, 0)) else None
+
+colF.metric("Viagens por veículo", fmt_float(viagens_por_veic, 2), delta=trend_delta(viagens_por_veic, viagens_por_veic_ant, nd_abs=2, nd_pct=1))
+colG.metric("KM por veículo", fmt_float(km_por_veic, 2), delta=trend_delta(km_por_veic, km_por_veic_ant, nd_abs=2, nd_pct=1))
+colH.metric("Passageiros por veículo", fmt_float(pax_por_veic, 2), delta=trend_delta(pax_por_veic, pax_por_veic_ant, nd_abs=2, nd_pct=1))
+
 
 # ------------------------------
 # Gráficos
