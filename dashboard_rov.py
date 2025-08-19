@@ -1090,150 +1090,150 @@ for cc in ["Cobrador/Operador", "Matricula"]:
 if motorista_col is None:
     st.info("Não encontrei colunas de motorista (ex.: 'Cobrador/Operador' ou 'Matricula').")
 else:
-    # Agregações por motorista
-    dist_col_drv = "Distancia_cfg_km" if ("Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in df_filtered.columns else None)
-    grp_m = df_filtered.groupby(motorista_col, observed=False)
+        # Agregações por motorista
+        dist_col_drv = "Distancia_cfg_km" if ("Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in df_filtered.columns else None)
+        grp_m = df_filtered.groupby(motorista_col, observed=False)
 
-    viagens_m = grp_m.size().rename("Viagens")
-    pax_m = grp_m["Passageiros"].sum(numeric_only=True) if "Passageiros" in df_filtered.columns else pd.Series(0, index=viagens_m.index)
-    km_m = grp_m[dist_col_drv].sum(numeric_only=True) if dist_col_drv else pd.Series(0.0, index=viagens_m.index)
+        viagens_m = grp_m.size().rename("Viagens")
+        pax_m = grp_m["Passageiros"].sum(numeric_only=True) if "Passageiros" in df_filtered.columns else pd.Series(0, index=viagens_m.index)
+        km_m = grp_m[dist_col_drv].sum(numeric_only=True) if dist_col_drv else pd.Series(0.0, index=viagens_m.index)
 
-    paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
-    present_paying_m = [c for c in paying_cols_all if c in df_filtered.columns]
-    if present_paying_m:
-        pag_df = grp_m[present_paying_m].sum(numeric_only=True)
-        pag_m = pag_df.sum(axis=1)
-    else:
-        pag_m = pd.Series(0.0, index=viagens_m.index)
-
-    receita_m = pag_m * (float(tarifa_usuario) + float(subsidio_pagante))
-
-    # ---------- NOVO: Aproveitamento (horas trabalhadas vs carga diária 7:20) ----------
-    REF_HOURS = 7 + 20/60  # 7h20 = 7.333...
-    start_col = "Data Hora Inicio Operacao" if "Data Hora Inicio Operacao" in df_filtered.columns else None
-    end_col   = "Data Hora Final Operacao" if "Data Hora Final Operacao" in df_filtered.columns else None
-
-    util_df = pd.DataFrame()
-    if start_col and end_col:
-        tmp = df_filtered[[motorista_col, start_col, end_col]].copy()
-        tmp["dur_h"] = (pd.to_datetime(tmp[end_col], errors="coerce") - pd.to_datetime(tmp[start_col], errors="coerce")).dt.total_seconds() / 3600.0
-        # remove negativos/zeros
-        tmp.loc[(tmp["dur_h"] <= 0) | ~np.isfinite(tmp["dur_h"]), "dur_h"] = np.nan
-        # dia de referência (do início); fallback para Data Coleta
-        if "Data Coleta" in df_filtered.columns:
-            tmp["dia_ref"] = pd.to_datetime(df_filtered["Data Coleta"], errors="coerce").dt.date
+        paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
+        present_paying_m = [c for c in paying_cols_all if c in df_filtered.columns]
+        if present_paying_m:
+            pag_df = grp_m[present_paying_m].sum(numeric_only=True)
+            pag_m = pag_df.sum(axis=1)
         else:
-            tmp["dia_ref"] = pd.to_datetime(df_filtered[start_col], errors="coerce").dt.date
-        util_grp = tmp.dropna(subset=["dur_h"]).groupby([motorista_col, "dia_ref"], observed=False)["dur_h"].sum().reset_index()
-        horas_por_motorista = util_grp.groupby(motorista_col, observed=False)["dur_h"].sum()
-        dias_por_motorista = util_grp.groupby(motorista_col, observed=False)["dia_ref"].nunique()
-        aproveitamento_pct = horas_por_motorista / (dias_por_motorista * REF_HOURS)
-        aproveitamento_pct = aproveitamento_pct.replace([np.inf, -np.inf], np.nan)
-    else:
-        horas_por_motorista = pd.Series(dtype=float)
-        dias_por_motorista = pd.Series(dtype=float)
-        aproveitamento_pct = pd.Series(dtype=float)
+            pag_m = pd.Series(0.0, index=viagens_m.index)
 
-    # KPIs médios por motorista (sobre o conjunto filtrado)
-    n_motoristas = len(viagens_m.index)
-    k1, k2, k3, k4, k5 = st.columns(5)
-# Valores anteriores equivalentes para deltas
-try:
-    if (not df_ant.empty) and (motorista_col in df_ant.columns):
-        n_motoristas_ant = int(df_ant[motorista_col].nunique(dropna=True))
-    else:
+        receita_m = pag_m * (float(tarifa_usuario) + float(subsidio_pagante))
+
+        # ---------- NOVO: Aproveitamento (horas trabalhadas vs carga diária 7:20) ----------
+        REF_HOURS = 7 + 20/60  # 7h20 = 7.333...
+        start_col = "Data Hora Inicio Operacao" if "Data Hora Inicio Operacao" in df_filtered.columns else None
+        end_col   = "Data Hora Final Operacao" if "Data Hora Final Operacao" in df_filtered.columns else None
+
+        util_df = pd.DataFrame()
+        if start_col and end_col:
+            tmp = df_filtered[[motorista_col, start_col, end_col]].copy()
+            tmp["dur_h"] = (pd.to_datetime(tmp[end_col], errors="coerce") - pd.to_datetime(tmp[start_col], errors="coerce")).dt.total_seconds() / 3600.0
+            # remove negativos/zeros
+            tmp.loc[(tmp["dur_h"] <= 0) | ~np.isfinite(tmp["dur_h"]), "dur_h"] = np.nan
+            # dia de referência (do início); fallback para Data Coleta
+            if "Data Coleta" in df_filtered.columns:
+                tmp["dia_ref"] = pd.to_datetime(df_filtered["Data Coleta"], errors="coerce").dt.date
+            else:
+                tmp["dia_ref"] = pd.to_datetime(df_filtered[start_col], errors="coerce").dt.date
+            util_grp = tmp.dropna(subset=["dur_h"]).groupby([motorista_col, "dia_ref"], observed=False)["dur_h"].sum().reset_index()
+            horas_por_motorista = util_grp.groupby(motorista_col, observed=False)["dur_h"].sum()
+            dias_por_motorista = util_grp.groupby(motorista_col, observed=False)["dia_ref"].nunique()
+            aproveitamento_pct = horas_por_motorista / (dias_por_motorista * REF_HOURS)
+            aproveitamento_pct = aproveitamento_pct.replace([np.inf, -np.inf], np.nan)
+        else:
+            horas_por_motorista = pd.Series(dtype=float)
+            dias_por_motorista = pd.Series(dtype=float)
+            aproveitamento_pct = pd.Series(dtype=float)
+
+        # KPIs médios por motorista (sobre o conjunto filtrado)
+        n_motoristas = len(viagens_m.index)
+        k1, k2, k3, k4, k5 = st.columns(5)
+    # Valores anteriores equivalentes para deltas
+    try:
+        if (not df_ant.empty) and (motorista_col in df_ant.columns):
+            n_motoristas_ant = int(df_ant[motorista_col].nunique(dropna=True))
+        else:
+            n_motoristas_ant = None
+    except Exception:
         n_motoristas_ant = None
-except Exception:
-    n_motoristas_ant = None
 
-media_viag_mot_ant   = (float(viagens_ant) / float(n_motoristas_ant)) if (viagens_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
-media_pax_mot_ant    = (float(total_pax_ant) / float(n_motoristas_ant)) if (total_pax_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
-media_km_mot_ant     = (float(dist_total_ant) / float(n_motoristas_ant)) if (dist_total_ant not in (None, 0) and n_motoristas_ant and n_motoristas_ant > 0) else None
-media_rec_mot_ant    = (float(receita_total_ant) / float(n_motoristas_ant)) if (receita_total_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
-k1.metric("Motoristas distintos", fmt_int(n_motoristas), delta=trend_delta(n_motoristas, n_motoristas_ant, nd_abs=0, nd_pct=1))
-k2.metric("Média de viagens/motorista", fmt_float((viagens / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((viagens / n_motoristas) if n_motoristas else 0, media_viag_mot_ant, nd_abs=2, nd_pct=1))
-k3.metric("Média de pax/motorista", fmt_float((total_pax / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((total_pax / n_motoristas) if n_motoristas else 0, media_pax_mot_ant, nd_abs=2, nd_pct=1))
-k4.metric("Média de km/motorista", fmt_float((dist_total / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((dist_total / n_motoristas) if n_motoristas else 0, media_km_mot_ant, nd_abs=2, nd_pct=1))
-k5.metric("Média de receita/motorista", fmt_currency((receita_total / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((receita_total / n_motoristas) if n_motoristas else 0, media_rec_mot_ant, nd_abs=2, nd_pct=1))
+    media_viag_mot_ant   = (float(viagens_ant) / float(n_motoristas_ant)) if (viagens_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
+    media_pax_mot_ant    = (float(total_pax_ant) / float(n_motoristas_ant)) if (total_pax_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
+    media_km_mot_ant     = (float(dist_total_ant) / float(n_motoristas_ant)) if (dist_total_ant not in (None, 0) and n_motoristas_ant and n_motoristas_ant > 0) else None
+    media_rec_mot_ant    = (float(receita_total_ant) / float(n_motoristas_ant)) if (receita_total_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
+    k1.metric("Motoristas distintos", fmt_int(n_motoristas), delta=trend_delta(n_motoristas, n_motoristas_ant, nd_abs=0, nd_pct=1))
+    k2.metric("Média de viagens/motorista", fmt_float((viagens / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((viagens / n_motoristas) if n_motoristas else 0, media_viag_mot_ant, nd_abs=2, nd_pct=1))
+    k3.metric("Média de pax/motorista", fmt_float((total_pax / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((total_pax / n_motoristas) if n_motoristas else 0, media_pax_mot_ant, nd_abs=2, nd_pct=1))
+    k4.metric("Média de km/motorista", fmt_float((dist_total / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((dist_total / n_motoristas) if n_motoristas else 0, media_km_mot_ant, nd_abs=2, nd_pct=1))
+    k5.metric("Média de receita/motorista", fmt_currency((receita_total / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((receita_total / n_motoristas) if n_motoristas else 0, media_rec_mot_ant, nd_abs=2, nd_pct=1))
 
-    # Bloco de aproveitamento agregado
-    st.markdown("**Aproveitamento (horas trabalhadas ÷ 7:20 por dia)**")
-    if not aproveitamento_pct.empty:
-        media_aprov = float(np.nanmean(aproveitamento_pct.values)) if len(aproveitamento_pct) else np.nan
-        pct_full = float(np.mean(aproveitamento_pct >= 1.0)) if len(aproveitamento_pct) else 0.0
-        pct_baixo = float(np.mean(aproveitamento_pct <= 0.8)) if len(aproveitamento_pct) else 0.0
-        a1, a2, a3 = st.columns(3)
-        # Valores do período anterior para aproveitamento
-        try:
-            aproveitamento_pct_ant = pd.Series(dtype=float)
-            if (not df_ant.empty) and (motorista_col in df_ant.columns):
-                tmp = df_ant.copy()
-                if start_col and end_col and (start_col in tmp.columns) and (end_col in tmp.columns):
-                    di = pd.to_datetime(tmp[start_col], errors="coerce")
-                    df_ = pd.to_datetime(tmp[end_col], errors="coerce")
-                    tmp["dur_h"] = (df_ - di).dt.total_seconds() / 3600.0
-                else:
-                    tmp["dur_h"] = np.nan
-                if date_col in tmp.columns:
-                    tmp["dia_ref"] = pd.to_datetime(tmp[date_col], errors="coerce").dt.date
-                else:
-                    tmp["dia_ref"] = pd.NaT
-                util_grp_ant = tmp.dropna(subset=["dur_h"]).groupby([motorista_col, "dia_ref"], observed=False)["dur_h"].sum().reset_index()
-                horas_por_motorista_ant = util_grp_ant.groupby(motorista_col, observed=False)["dur_h"].sum()
-                dias_por_motorista_ant = util_grp_ant.groupby(motorista_col, observed=False)["dia_ref"].nunique()
-                aproveitamento_pct_ant = horas_por_motorista_ant / (dias_por_motorista_ant * REF_HOURS)
-                aproveitamento_pct_ant = aproveitamento_pct_ant.replace([np.inf, -np.inf], np.nan)
-            media_aprov_ant = float(np.nanmean(aproveitamento_pct_ant.values)) if len(aproveitamento_pct_ant) else None
-            pct_full_ant = float(np.mean(aproveitamento_pct_ant >= 1.0)) if len(aproveitamento_pct_ant) else None
-            pct_baixo_ant = float(np.mean(aproveitamento_pct_ant <= 0.8)) if len(aproveitamento_pct_ant) else None
-        except Exception:
-            media_aprov_ant = None
-            pct_full_ant = None
-            pct_baixo_ant = None
-        a1.metric("Média de aproveitamento", fmt_pct(media_aprov, 1), delta=trend_delta(media_aprov, media_aprov_ant, nd_abs=2, nd_pct=1))
-        a2.metric("% motoristas ≥ 100%", fmt_pct(pct_full, 1), delta=trend_delta(pct_full, pct_full_ant, nd_abs=2, nd_pct=1))
-        a3.metric("% motoristas ≤ 80%", fmt_pct(pct_baixo, 1), delta=trend_delta(pct_baixo, pct_baixo_ant, nd_abs=2, nd_pct=1))
-    else:
-        st.info("Para calcular o aproveitamento, são necessários 'Data Hora Inicio Operacao' e 'Data Hora Final Operacao'.")
-
-    # Rankings
-    st.markdown("**Rankings por motorista (Top 20)**")
-    colM1, colM2, colM3, colM4, colM5 = st.columns(5)
-
-    with colM1:
-        top_pax = pd.DataFrame({"Motorista": pax_m.index, "Passageiros": pax_m.values}).sort_values("Passageiros", ascending=False).head(20)
-        top_pax["Passageiros"] = top_pax["Passageiros"].apply(fmt_int)
-        st.caption("Mais passageiros")
-        st.dataframe(top_pax, use_container_width=True)
-
-    with colM2:
-        top_viag = pd.DataFrame({"Motorista": viagens_m.index, "Viagens": viagens_m.values}).sort_values("Viagens", ascending=False).head(20)
-        top_viag["Viagens"] = top_viag["Viagens"].apply(fmt_int)
-        st.caption("Mais viagens")
-        st.dataframe(top_viag, use_container_width=True)
-
-    with colM3:
-        top_km = pd.DataFrame({"Motorista": km_m.index, "KM": km_m.values}).sort_values("KM", ascending=False).head(20)
-        top_km["KM"] = top_km["KM"].apply(lambda v: fmt_float(v, 1))
-        st.caption("Mais KM")
-        st.dataframe(top_km, use_container_width=True)
-
-    with colM4:
-        top_rec = pd.DataFrame({"Motorista": receita_m.index, "Receita": receita_m.values}).sort_values("Receita", ascending=False).head(20)
-        top_rec["Receita"] = top_rec["Receita"].apply(lambda v: fmt_currency(v, 2))
-        st.caption("Mais receita")
-        st.dataframe(top_rec, use_container_width=True)
-
-    with colM5:
+        # Bloco de aproveitamento agregado
+        st.markdown("**Aproveitamento (horas trabalhadas ÷ 7:20 por dia)**")
         if not aproveitamento_pct.empty:
-            top_aprov = aproveitamento_pct.sort_values(ascending=False).head(20).reset_index()
-            top_aprov.columns = ["Motorista", "Aproveitamento"]
-            top_aprov["Aproveitamento"] = top_aprov["Aproveitamento"].apply(lambda v: fmt_pct(v, 1))
-            st.caption("Maior aproveitamento")
-            st.dataframe(top_aprov, use_container_width=True)
+            media_aprov = float(np.nanmean(aproveitamento_pct.values)) if len(aproveitamento_pct) else np.nan
+            pct_full = float(np.mean(aproveitamento_pct >= 1.0)) if len(aproveitamento_pct) else 0.0
+            pct_baixo = float(np.mean(aproveitamento_pct <= 0.8)) if len(aproveitamento_pct) else 0.0
+            a1, a2, a3 = st.columns(3)
+            # Valores do período anterior para aproveitamento
+            try:
+                aproveitamento_pct_ant = pd.Series(dtype=float)
+                if (not df_ant.empty) and (motorista_col in df_ant.columns):
+                    tmp = df_ant.copy()
+                    if start_col and end_col and (start_col in tmp.columns) and (end_col in tmp.columns):
+                        di = pd.to_datetime(tmp[start_col], errors="coerce")
+                        df_ = pd.to_datetime(tmp[end_col], errors="coerce")
+                        tmp["dur_h"] = (df_ - di).dt.total_seconds() / 3600.0
+                    else:
+                        tmp["dur_h"] = np.nan
+                    if date_col in tmp.columns:
+                        tmp["dia_ref"] = pd.to_datetime(tmp[date_col], errors="coerce").dt.date
+                    else:
+                        tmp["dia_ref"] = pd.NaT
+                    util_grp_ant = tmp.dropna(subset=["dur_h"]).groupby([motorista_col, "dia_ref"], observed=False)["dur_h"].sum().reset_index()
+                    horas_por_motorista_ant = util_grp_ant.groupby(motorista_col, observed=False)["dur_h"].sum()
+                    dias_por_motorista_ant = util_grp_ant.groupby(motorista_col, observed=False)["dia_ref"].nunique()
+                    aproveitamento_pct_ant = horas_por_motorista_ant / (dias_por_motorista_ant * REF_HOURS)
+                    aproveitamento_pct_ant = aproveitamento_pct_ant.replace([np.inf, -np.inf], np.nan)
+                media_aprov_ant = float(np.nanmean(aproveitamento_pct_ant.values)) if len(aproveitamento_pct_ant) else None
+                pct_full_ant = float(np.mean(aproveitamento_pct_ant >= 1.0)) if len(aproveitamento_pct_ant) else None
+                pct_baixo_ant = float(np.mean(aproveitamento_pct_ant <= 0.8)) if len(aproveitamento_pct_ant) else None
+            except Exception:
+                media_aprov_ant = None
+                pct_full_ant = None
+                pct_baixo_ant = None
+            a1.metric("Média de aproveitamento", fmt_pct(media_aprov, 1), delta=trend_delta(media_aprov, media_aprov_ant, nd_abs=2, nd_pct=1))
+            a2.metric("% motoristas ≥ 100%", fmt_pct(pct_full, 1), delta=trend_delta(pct_full, pct_full_ant, nd_abs=2, nd_pct=1))
+            a3.metric("% motoristas ≤ 80%", fmt_pct(pct_baixo, 1), delta=trend_delta(pct_baixo, pct_baixo_ant, nd_abs=2, nd_pct=1))
         else:
-            st.caption("Maior aproveitamento")
-            st.info("Sem dados suficientes para o ranking de aproveitamento.")
+            st.info("Para calcular o aproveitamento, são necessários 'Data Hora Inicio Operacao' e 'Data Hora Final Operacao'.")
+
+        # Rankings
+        st.markdown("**Rankings por motorista (Top 20)**")
+        colM1, colM2, colM3, colM4, colM5 = st.columns(5)
+
+        with colM1:
+            top_pax = pd.DataFrame({"Motorista": pax_m.index, "Passageiros": pax_m.values}).sort_values("Passageiros", ascending=False).head(20)
+            top_pax["Passageiros"] = top_pax["Passageiros"].apply(fmt_int)
+            st.caption("Mais passageiros")
+            st.dataframe(top_pax, use_container_width=True)
+
+        with colM2:
+            top_viag = pd.DataFrame({"Motorista": viagens_m.index, "Viagens": viagens_m.values}).sort_values("Viagens", ascending=False).head(20)
+            top_viag["Viagens"] = top_viag["Viagens"].apply(fmt_int)
+            st.caption("Mais viagens")
+            st.dataframe(top_viag, use_container_width=True)
+
+        with colM3:
+            top_km = pd.DataFrame({"Motorista": km_m.index, "KM": km_m.values}).sort_values("KM", ascending=False).head(20)
+            top_km["KM"] = top_km["KM"].apply(lambda v: fmt_float(v, 1))
+            st.caption("Mais KM")
+            st.dataframe(top_km, use_container_width=True)
+
+        with colM4:
+            top_rec = pd.DataFrame({"Motorista": receita_m.index, "Receita": receita_m.values}).sort_values("Receita", ascending=False).head(20)
+            top_rec["Receita"] = top_rec["Receita"].apply(lambda v: fmt_currency(v, 2))
+            st.caption("Mais receita")
+            st.dataframe(top_rec, use_container_width=True)
+
+        with colM5:
+            if not aproveitamento_pct.empty:
+                top_aprov = aproveitamento_pct.sort_values(ascending=False).head(20).reset_index()
+                top_aprov.columns = ["Motorista", "Aproveitamento"]
+                top_aprov["Aproveitamento"] = top_aprov["Aproveitamento"].apply(lambda v: fmt_pct(v, 1))
+                st.caption("Maior aproveitamento")
+                st.dataframe(top_aprov, use_container_width=True)
+            else:
+                st.caption("Maior aproveitamento")
+                st.info("Sem dados suficientes para o ranking de aproveitamento.")
 
 
 # ------------------------------
