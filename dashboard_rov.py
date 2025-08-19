@@ -933,14 +933,64 @@ pax_total_calc = float(total_pax) if pd.notna(total_pax) else 0.0
 custo_publico_por_pax_total = (subsidio_total / pax_total_calc) if pax_total_calc > 0 else 0.0
 
 st.subheader("💰 Indicadores financeiros (parâmetros na barra lateral)")
+
+# Tendências: calcula valores do período anterior
+try:
+    paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
+    integration_cols_all = ["Quant Passagem Integracao","Quant Passe Integracao","Quant Vale Transporte Integracao"]
+    present_paying_ant = [c for c in paying_cols_all if (not df_ant.empty and c in df_ant.columns)]
+    present_integration_ant = [c for c in integration_cols_all if (not df_ant.empty and c in df_ant.columns)]
+
+    total_pagantes_ant = float(df_ant[present_paying_ant].sum().sum()) if present_paying_ant else 0.0
+    total_integracoes_ant = float(df_ant[present_integration_ant].sum().sum()) if present_integration_ant else 0.0
+    total_gratuidade_ant = float(df_ant["Quant Gratuidade"].sum()) if ((not df_ant.empty) and ("Quant Gratuidade" in df_ant.columns)) else 0.0
+
+    receita_tarifaria_ant = total_pagantes_ant * float(tarifa_usuario)
+    subsidio_total_ant = total_pagantes_ant * float(subsidio_pagante)
+    receita_total_ant = receita_tarifaria_ant + subsidio_total_ant
+
+    pax_total_calc_ant = float(total_pax_ant) if (total_pax_ant is not None) else 0.0
+    custo_publico_por_pax_total_ant = (subsidio_total_ant / pax_total_calc_ant) if pax_total_calc_ant > 0 else None
+except Exception:
+    total_pagantes_ant = None
+    total_integracoes_ant = None
+    total_gratuidade_ant = None
+    receita_tarifaria_ant = None
+    subsidio_total_ant = None
+    receita_total_ant = None
+    custo_publico_por_pax_total_ant = None
+
+# KPIs Financeiros com tendências
+try:
+    paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
+    integration_cols_all = ["Quant Passagem Integracao","Quant Passe Integracao","Quant Vale Transporte Integracao"]
+    present_paying_ant = [c for c in paying_cols_all if (not df_ant.empty and c in df_ant.columns)]
+    present_integration_ant = [c for c in integration_cols_all if (not df_ant.empty and c in df_ant.columns)]
+    total_pagantes_ant = float(df_ant[present_paying_ant].sum().sum()) if present_paying_ant else 0.0
+    total_integracoes_ant = float(df_ant[present_integration_ant].sum().sum()) if present_integration_ant else 0.0
+    total_gratuidade_ant = float(df_ant["Quant Gratuidade"].sum()) if ((not df_ant.empty) and ("Quant Gratuidade" in df_ant.columns)) else 0.0
+    receita_tarifaria_ant = total_pagantes_ant * float(tarifa_usuario)
+    subsidio_total_ant = total_pagantes_ant * float(subsidio_pagante)
+    receita_total_ant = receita_tarifaria_ant + subsidio_total_ant
+    pax_total_calc_ant = float(total_pax_ant) if (total_pax_ant is not None) else 0.0
+    custo_publico_por_pax_total_ant = (subsidio_total_ant / pax_total_calc_ant) if pax_total_calc_ant > 0 else None
+except Exception:
+    total_pagantes_ant = None
+    total_integracoes_ant = None
+    total_gratuidade_ant = None
+    receita_tarifaria_ant = None
+    subsidio_total_ant = None
+    receita_total_ant = None
+    custo_publico_por_pax_total_ant = None
+
 fin_cols = st.columns(7)
-fin_cols[0].metric("Pagantes", fmt_int(total_pagantes))
-fin_cols[1].metric("Integrações (sem custo)", fmt_int(total_integracoes))
-fin_cols[2].metric("Gratuidades", fmt_int(total_gratuidade))
-fin_cols[3].metric("Receita tarifária", fmt_currency(receita_tarifaria, 2))
-fin_cols[4].metric("Subsídio total", fmt_currency(subsidio_total, 2))
-fin_cols[5].metric("Custo público/pax", fmt_currency(custo_publico_por_pax_total, 2))
-fin_cols[6].metric("Receita total", fmt_currency(receita_total, 2))
+fin_cols[0].metric("Pagantes", fmt_int(total_pagantes), delta=trend_delta(total_pagantes, total_pagantes_ant, nd_abs=0, nd_pct=1))
+fin_cols[1].metric("Integrações (sem custo)", fmt_int(total_integracoes), delta=trend_delta(total_integracoes, total_integracoes_ant, nd_abs=0, nd_pct=1))
+fin_cols[2].metric("Gratuidades", fmt_int(total_gratuidade), delta=trend_delta(total_gratuidade, total_gratuidade_ant, nd_abs=0, nd_pct=1))
+fin_cols[3].metric("Receita tarifária", fmt_currency(receita_tarifaria, 2), delta=trend_delta(receita_tarifaria, receita_tarifaria_ant, nd_abs=2, nd_pct=1))
+fin_cols[4].metric("Subsídio total", fmt_currency(subsidio_total, 2), delta=trend_delta(subsidio_total, subsidio_total_ant, nd_abs=2, nd_pct=1))
+fin_cols[5].metric("Custo público/pax", fmt_currency(custo_publico_por_pax_total, 2), delta=trend_delta(custo_publico_por_pax_total, custo_publico_por_pax_total_ant, nd_abs=2, nd_pct=1))
+fin_cols[6].metric("Receita total", fmt_currency(receita_total, 2), delta=trend_delta(receita_total, receita_total_ant, nd_abs=2, nd_pct=1))
 
 # ---------- NOVOS INDICADORES ----------
 # IPK (passageiros por km)
@@ -1087,11 +1137,24 @@ else:
     # KPIs médios por motorista (sobre o conjunto filtrado)
     n_motoristas = len(viagens_m.index)
     k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Motoristas distintos", fmt_int(n_motoristas))
-    k2.metric("Média de viagens/motorista", fmt_float((viagens / n_motoristas) if n_motoristas else 0, 2))
-    k3.metric("Média de pax/motorista", fmt_float((total_pax / n_motoristas) if n_motoristas else 0, 2))
-    k4.metric("Média de km/motorista", fmt_float((dist_total / n_motoristas) if n_motoristas else 0, 2))
-    k5.metric("Média de receita/motorista", fmt_currency((receita_total / n_motoristas) if n_motoristas else 0, 2))
+# Valores anteriores equivalentes para deltas
+try:
+    if (not df_ant.empty) and (motorista_col in df_ant.columns):
+        n_motoristas_ant = int(df_ant[motorista_col].nunique(dropna=True))
+    else:
+        n_motoristas_ant = None
+except Exception:
+    n_motoristas_ant = None
+
+media_viag_mot_ant   = (float(viagens_ant) / float(n_motoristas_ant)) if (viagens_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
+media_pax_mot_ant    = (float(total_pax_ant) / float(n_motoristas_ant)) if (total_pax_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
+media_km_mot_ant     = (float(dist_total_ant) / float(n_motoristas_ant)) if (dist_total_ant not in (None, 0) and n_motoristas_ant and n_motoristas_ant > 0) else None
+media_rec_mot_ant    = (float(receita_total_ant) / float(n_motoristas_ant)) if (receita_total_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
+k1.metric("Motoristas distintos", fmt_int(n_motoristas), delta=trend_delta(n_motoristas, n_motoristas_ant, nd_abs=0, nd_pct=1))
+k2.metric("Média de viagens/motorista", fmt_float((viagens / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((viagens / n_motoristas) if n_motoristas else 0, media_viag_mot_ant, nd_abs=2, nd_pct=1))
+k3.metric("Média de pax/motorista", fmt_float((total_pax / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((total_pax / n_motoristas) if n_motoristas else 0, media_pax_mot_ant, nd_abs=2, nd_pct=1))
+k4.metric("Média de km/motorista", fmt_float((dist_total / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((dist_total / n_motoristas) if n_motoristas else 0, media_km_mot_ant, nd_abs=2, nd_pct=1))
+k5.metric("Média de receita/motorista", fmt_currency((receita_total / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((receita_total / n_motoristas) if n_motoristas else 0, media_rec_mot_ant, nd_abs=2, nd_pct=1))
 
     # Bloco de aproveitamento agregado
     st.markdown("**Aproveitamento (horas trabalhadas ÷ 7:20 por dia)**")
@@ -1100,9 +1163,36 @@ else:
         pct_full = float(np.mean(aproveitamento_pct >= 1.0)) if len(aproveitamento_pct) else 0.0
         pct_baixo = float(np.mean(aproveitamento_pct <= 0.8)) if len(aproveitamento_pct) else 0.0
         a1, a2, a3 = st.columns(3)
-        a1.metric("Média de aproveitamento", fmt_pct(media_aprov, 1))
-        a2.metric("% motoristas ≥ 100%", fmt_pct(pct_full, 1))
-        a3.metric("% motoristas ≤ 80%", fmt_pct(pct_baixo, 1))
+# Valores do período anterior para aproveitamento
+try:
+    aproveitamento_pct_ant = pd.Series(dtype=float)
+    if (not df_ant.empty) and (motorista_col in df_ant.columns):
+        tmp = df_ant.copy()
+        if start_col and end_col and (start_col in tmp.columns) and (end_col in tmp.columns):
+            di = pd.to_datetime(tmp[start_col], errors="coerce")
+            df_ = pd.to_datetime(tmp[end_col], errors="coerce")
+            tmp["dur_h"] = (df_ - di).dt.total_seconds() / 3600.0
+        else:
+            tmp["dur_h"] = np.nan
+        if date_col in tmp.columns:
+            tmp["dia_ref"] = pd.to_datetime(tmp[date_col], errors="coerce").dt.date
+        else:
+            tmp["dia_ref"] = pd.NaT
+        util_grp_ant = tmp.dropna(subset=["dur_h"]).groupby([motorista_col, "dia_ref"], observed=False)["dur_h"].sum().reset_index()
+        horas_por_motorista_ant = util_grp_ant.groupby(motorista_col, observed=False)["dur_h"].sum()
+        dias_por_motorista_ant = util_grp_ant.groupby(motorista_col, observed=False)["dia_ref"].nunique()
+        aproveitamento_pct_ant = horas_por_motorista_ant / (dias_por_motorista_ant * REF_HOURS)
+        aproveitamento_pct_ant = aproveitamento_pct_ant.replace([np.inf, -np.inf], np.nan)
+    media_aprov_ant = float(np.nanmean(aproveitamento_pct_ant.values)) if len(aproveitamento_pct_ant) else None
+    pct_full_ant = float(np.mean(aproveitamento_pct_ant >= 1.0)) if len(aproveitamento_pct_ant) else None
+    pct_baixo_ant = float(np.mean(aproveitamento_pct_ant <= 0.8)) if len(aproveitamento_pct_ant) else None
+except Exception:
+    media_aprov_ant = None
+    pct_full_ant = None
+    pct_baixo_ant = None
+a1.metric("Média de aproveitamento", fmt_pct(media_aprov, 1), delta=trend_delta(media_aprov, media_aprov_ant, nd_abs=2, nd_pct=1))
+a2.metric("% motoristas ≥ 100%", fmt_pct(pct_full, 1), delta=trend_delta(pct_full, pct_full_ant, nd_abs=2, nd_pct=1))
+a3.metric("% motoristas ≤ 80%", fmt_pct(pct_baixo, 1), delta=trend_delta(pct_baixo, pct_baixo_ant, nd_abs=2, nd_pct=1))
     else:
         st.info("Para calcular o aproveitamento, são necessários 'Data Hora Inicio Operacao' e 'Data Hora Final Operacao'.")
 
