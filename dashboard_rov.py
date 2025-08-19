@@ -1137,24 +1137,26 @@ else:
         # KPIs médios por motorista (sobre o conjunto filtrado)
         n_motoristas = len(viagens_m.index)
         k1, k2, k3, k4, k5 = st.columns(5)
-    # Valores anteriores equivalentes para deltas
-    try:
-        if (not df_ant.empty) and (motorista_col in df_ant.columns):
-            n_motoristas_ant = int(df_ant[motorista_col].nunique(dropna=True))
-        else:
-            n_motoristas_ant = None
-    except Exception:
-        n_motoristas_ant = None
 
-    media_viag_mot_ant   = (float(viagens_ant) / float(n_motoristas_ant)) if (viagens_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
-    media_pax_mot_ant    = (float(total_pax_ant) / float(n_motoristas_ant)) if (total_pax_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
-    media_km_mot_ant     = (float(dist_total_ant) / float(n_motoristas_ant)) if (dist_total_ant not in (None, 0) and n_motoristas_ant and n_motoristas_ant > 0) else None
-    media_rec_mot_ant    = (float(receita_total_ant) / float(n_motoristas_ant)) if (receita_total_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
-    k1.metric("Motoristas distintos", fmt_int(n_motoristas), delta=trend_delta(n_motoristas, n_motoristas_ant, nd_abs=0, nd_pct=1))
-    k2.metric("Média de viagens/motorista", fmt_float((viagens / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((viagens / n_motoristas) if n_motoristas else 0, media_viag_mot_ant, nd_abs=2, nd_pct=1))
-    k3.metric("Média de pax/motorista", fmt_float((total_pax / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((total_pax / n_motoristas) if n_motoristas else 0, media_pax_mot_ant, nd_abs=2, nd_pct=1))
-    k4.metric("Média de km/motorista", fmt_float((dist_total / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((dist_total / n_motoristas) if n_motoristas else 0, media_km_mot_ant, nd_abs=2, nd_pct=1))
-    k5.metric("Média de receita/motorista", fmt_currency((receita_total / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((receita_total / n_motoristas) if n_motoristas else 0, media_rec_mot_ant, nd_abs=2, nd_pct=1))
+        # Valores anteriores equivalentes para deltas
+        try:
+            if (not df_ant.empty) and (motorista_col in df_ant.columns):
+                n_motoristas_ant = int(df_ant[motorista_col].nunique(dropna=True))
+            else:
+                n_motoristas_ant = None
+        except Exception:
+            n_motoristas_ant = None
+
+        media_viag_mot_ant   = (float(viagens_ant) / float(n_motoristas_ant)) if (viagens_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
+        media_pax_mot_ant    = (float(total_pax_ant) / float(n_motoristas_ant)) if (total_pax_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
+        media_km_mot_ant     = (float(dist_total_ant) / float(n_motoristas_ant)) if (dist_total_ant not in (None, 0) and n_motoristas_ant and n_motoristas_ant > 0) else None
+        media_rec_mot_ant    = (float(receita_total_ant) / float(n_motoristas_ant)) if (receita_total_ant is not None and n_motoristas_ant and n_motoristas_ant > 0) else None
+
+        k1.metric("Motoristas distintos", fmt_int(n_motoristas), delta=trend_delta(n_motoristas, n_motoristas_ant, nd_abs=0, nd_pct=1))
+        k2.metric("Média de viagens/motorista", fmt_float((viagens / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((viagens / n_motoristas) if n_motoristas else 0, media_viag_mot_ant, nd_abs=2, nd_pct=1))
+        k3.metric("Média de pax/motorista", fmt_float((total_pax / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((total_pax / n_motoristas) if n_motoristas else 0, media_pax_mot_ant, nd_abs=2, nd_pct=1))
+        k4.metric("Média de km/motorista", fmt_float((dist_total / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((dist_total / n_motoristas) if n_motoristas else 0, media_km_mot_ant, nd_abs=2, nd_pct=1))
+        k5.metric("Média de receita/motorista", fmt_currency((receita_total / n_motoristas) if n_motoristas else 0, 2), delta=trend_delta((receita_total / n_motoristas) if n_motoristas else 0, media_rec_mot_ant, nd_abs=2, nd_pct=1))
 
         # Bloco de aproveitamento agregado
         st.markdown("**Aproveitamento (horas trabalhadas ÷ 7:20 por dia)**")
