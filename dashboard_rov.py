@@ -595,17 +595,17 @@ with st.sidebar.expander("🔧 Parâmetros (JSON)", expanded=False):
     cfg_upload_veic  = st.file_uploader("linhas_veic_config.json", type=["json"], key="upload_veic")
     if cfg_upload_categ is not None:
         try:
-            cfg_categ = json.load(cfg_upload_categ)
+            cfg_categ = _json_relax(cfg_upload_categ.read().decode("utf-8", "ignore"))
         except Exception as e:
             st.warning(f"Falha ao ler linhas_config.json enviado: {e}")
     if "km_store" in locals() and cfg_upload_km is not None:
         try:
-            km_store = json.load(cfg_upload_km)
+            km_store = _json_relax(cfg_upload_km.read().decode("utf-8", "ignore"))
         except Exception as e:
             st.warning(f"Falha ao ler linhas_km_config.json enviado: {e}")
     if "veic_store" in locals() and cfg_upload_veic is not None:
         try:
-            veic_store = json.load(cfg_upload_veic)
+            veic_store = _json_relax(cfg_upload_veic.read().decode("utf-8", "ignore"))
         except Exception as e:
             st.warning(f"Falha ao ler linhas_veic_config.json enviado: {e}")
     valid_vals = {"Urbana", "Distrital"}
@@ -885,7 +885,7 @@ if "Data Coleta" in df.columns and df["Data Coleta"].notna().any():
     data_min = pd.to_datetime(df_filtered["Data Coleta"].min())
     data_max = pd.to_datetime(df_filtered["Data Coleta"].max())
     periodo_dias = (data_max - data_min).days + 1
-    periodo_ant_ini = data_min - pd.Timedelta(days=periodo_dias)
+    periodo_ant_ini = data_min - pd.Timedelta(days=int(max(1, (0 if pd.isna(periodo_dias) else periodo_dias))))
     periodo_ant_fim = data_min - pd.Timedelta(days=1)
     df_ant = df[(df["Data Coleta"].dt.date >= periodo_ant_ini.date()) & (df["Data Coleta"].dt.date <= periodo_ant_fim.date())]
 else:
