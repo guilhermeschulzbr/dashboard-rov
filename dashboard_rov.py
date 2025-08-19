@@ -1163,36 +1163,36 @@ k5.metric("Média de receita/motorista", fmt_currency((receita_total / n_motoris
         pct_full = float(np.mean(aproveitamento_pct >= 1.0)) if len(aproveitamento_pct) else 0.0
         pct_baixo = float(np.mean(aproveitamento_pct <= 0.8)) if len(aproveitamento_pct) else 0.0
         a1, a2, a3 = st.columns(3)
-# Valores do período anterior para aproveitamento
-try:
-    aproveitamento_pct_ant = pd.Series(dtype=float)
-    if (not df_ant.empty) and (motorista_col in df_ant.columns):
-        tmp = df_ant.copy()
-        if start_col and end_col and (start_col in tmp.columns) and (end_col in tmp.columns):
-            di = pd.to_datetime(tmp[start_col], errors="coerce")
-            df_ = pd.to_datetime(tmp[end_col], errors="coerce")
-            tmp["dur_h"] = (df_ - di).dt.total_seconds() / 3600.0
-        else:
-            tmp["dur_h"] = np.nan
-        if date_col in tmp.columns:
-            tmp["dia_ref"] = pd.to_datetime(tmp[date_col], errors="coerce").dt.date
-        else:
-            tmp["dia_ref"] = pd.NaT
-        util_grp_ant = tmp.dropna(subset=["dur_h"]).groupby([motorista_col, "dia_ref"], observed=False)["dur_h"].sum().reset_index()
-        horas_por_motorista_ant = util_grp_ant.groupby(motorista_col, observed=False)["dur_h"].sum()
-        dias_por_motorista_ant = util_grp_ant.groupby(motorista_col, observed=False)["dia_ref"].nunique()
-        aproveitamento_pct_ant = horas_por_motorista_ant / (dias_por_motorista_ant * REF_HOURS)
-        aproveitamento_pct_ant = aproveitamento_pct_ant.replace([np.inf, -np.inf], np.nan)
-    media_aprov_ant = float(np.nanmean(aproveitamento_pct_ant.values)) if len(aproveitamento_pct_ant) else None
-    pct_full_ant = float(np.mean(aproveitamento_pct_ant >= 1.0)) if len(aproveitamento_pct_ant) else None
-    pct_baixo_ant = float(np.mean(aproveitamento_pct_ant <= 0.8)) if len(aproveitamento_pct_ant) else None
-except Exception:
-    media_aprov_ant = None
-    pct_full_ant = None
-    pct_baixo_ant = None
-a1.metric("Média de aproveitamento", fmt_pct(media_aprov, 1), delta=trend_delta(media_aprov, media_aprov_ant, nd_abs=2, nd_pct=1))
-a2.metric("% motoristas ≥ 100%", fmt_pct(pct_full, 1), delta=trend_delta(pct_full, pct_full_ant, nd_abs=2, nd_pct=1))
-a3.metric("% motoristas ≤ 80%", fmt_pct(pct_baixo, 1), delta=trend_delta(pct_baixo, pct_baixo_ant, nd_abs=2, nd_pct=1))
+        # Valores do período anterior para aproveitamento
+        try:
+            aproveitamento_pct_ant = pd.Series(dtype=float)
+            if (not df_ant.empty) and (motorista_col in df_ant.columns):
+                tmp = df_ant.copy()
+                if start_col and end_col and (start_col in tmp.columns) and (end_col in tmp.columns):
+                    di = pd.to_datetime(tmp[start_col], errors="coerce")
+                    df_ = pd.to_datetime(tmp[end_col], errors="coerce")
+                    tmp["dur_h"] = (df_ - di).dt.total_seconds() / 3600.0
+                else:
+                    tmp["dur_h"] = np.nan
+                if date_col in tmp.columns:
+                    tmp["dia_ref"] = pd.to_datetime(tmp[date_col], errors="coerce").dt.date
+                else:
+                    tmp["dia_ref"] = pd.NaT
+                util_grp_ant = tmp.dropna(subset=["dur_h"]).groupby([motorista_col, "dia_ref"], observed=False)["dur_h"].sum().reset_index()
+                horas_por_motorista_ant = util_grp_ant.groupby(motorista_col, observed=False)["dur_h"].sum()
+                dias_por_motorista_ant = util_grp_ant.groupby(motorista_col, observed=False)["dia_ref"].nunique()
+                aproveitamento_pct_ant = horas_por_motorista_ant / (dias_por_motorista_ant * REF_HOURS)
+                aproveitamento_pct_ant = aproveitamento_pct_ant.replace([np.inf, -np.inf], np.nan)
+            media_aprov_ant = float(np.nanmean(aproveitamento_pct_ant.values)) if len(aproveitamento_pct_ant) else None
+            pct_full_ant = float(np.mean(aproveitamento_pct_ant >= 1.0)) if len(aproveitamento_pct_ant) else None
+            pct_baixo_ant = float(np.mean(aproveitamento_pct_ant <= 0.8)) if len(aproveitamento_pct_ant) else None
+        except Exception:
+            media_aprov_ant = None
+            pct_full_ant = None
+            pct_baixo_ant = None
+        a1.metric("Média de aproveitamento", fmt_pct(media_aprov, 1), delta=trend_delta(media_aprov, media_aprov_ant, nd_abs=2, nd_pct=1))
+        a2.metric("% motoristas ≥ 100%", fmt_pct(pct_full, 1), delta=trend_delta(pct_full, pct_full_ant, nd_abs=2, nd_pct=1))
+        a3.metric("% motoristas ≤ 80%", fmt_pct(pct_baixo, 1), delta=trend_delta(pct_baixo, pct_baixo_ant, nd_abs=2, nd_pct=1))
     else:
         st.info("Para calcular o aproveitamento, são necessários 'Data Hora Inicio Operacao' e 'Data Hora Final Operacao'.")
 
