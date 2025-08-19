@@ -1,50 +1,3 @@
-# Resolvedor de caminho para JSONs de configuração
-def _candidate_config_dirs():
-    dirs = []
-    try:
-        dirs.append(os.getcwd())
-    except Exception:
-        pass
-    try:
-        base = os.path.dirname(os.path.abspath(__file__))
-        dirs += [base, os.path.join(base, "config"), os.path.join(base, "data")]
-        parent = os.path.dirname(base)
-        dirs += [parent, os.path.join(parent, "config"), os.path.join(parent, "data")]
-    except Exception:
-        pass
-    envdir = os.environ.get("ROV_CONFIG_DIR")
-    if envdir:
-        dirs.insert(0, envdir)
-    try:
-        home = os.path.expanduser("~")
-        dirs += [os.path.join(home, ".dashboard_rov")]
-    except Exception:
-        pass
-    seen, out = set(), []
-    for d in dirs:
-        if d and d not in seen and os.path.isdir(d):
-            seen.add(d); out.append(d)
-    return out or [os.getcwd()]
-
-def resolve_config_path(basename: str):
-    if os.path.isabs(basename) and os.path.exists(basename):
-        return basename
-    for d in _candidate_config_dirs():
-        p = os.path.join(d, basename)
-        if os.path.exists(p):
-            return p
-    return os.path.join(os.getcwd(), basename)
-
-# JSON "relaxado": aceita comentários, remove vírgulas finais e BOM
-def _json_relax(txt: str):
-    import re, json
-    if txt and txt[:1] == "\ufeff":
-        txt = txt[1:]
-    txt = re.sub(r'//.*?$', '', txt, flags=re.MULTILINE)      # // comments
-    txt = re.sub(r'/\*.*?\*/', '', txt, flags=re.DOTALL)    # /* ... */ comments
-    txt = re.sub(r',\s*(\]|})', r'\1', txt)                # trailing commas
-    return json.loads(txt)
-
 # -*- coding: utf-8 -*-
 # ============================================================
 # Dashboard Operacional ROV (apenas com dados do arquivo)
@@ -98,20 +51,15 @@ CONFIG_PATH_CATEG = os.path.join(os.getcwd(), "linhas_config.json")          # c
 CONFIG_PATH_KM    = os.path.join(os.getcwd(), "linhas_km_config.json")       # vigências de km por linha
 CONFIG_PATH_VEIC  = os.path.join(os.getcwd(), "linhas_veic_config.json")     # vigências de veículos por linha
 
-def load_json_config(path: str) -> dict:
+def load_json_config(path: str):
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except json.JSONDecodeError:
-        try:
+        if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
-                return _json_relax(f.read())
-        except Exception:
-            return {}
-    except FileNotFoundError:
-        return {}
+                return json.load(f)
     except Exception:
-        return {}
+        pass
+    return {}
+
 def save_json_config(path: str, data) -> bool:
     try:
         with open(path, "w", encoding="utf-8") as f:
@@ -134,15 +82,7 @@ def fmt_float(x, nd=2):
         return f"{float(x):,.{nd}f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception:
         return "0,00"
-        
-def trend_delta(atual, anterior, nd=1):
-    if anterior is None or anterior == 0:
-        return ""
-    abs_delta = atual - anterior
-    pct_delta = (abs_delta / anterior) * 100
-    sinal = "+" if abs_delta > 0 else ""
-    return f"{sinal}{fmt_int(abs_delta)} ({sinal}{fmt_float(pct_delta, nd)}%)"
-    
+
 def fmt_currency(x, nd=2):
     return f"R$ {fmt_float(x, nd)}"
 
@@ -442,10 +382,10 @@ def load_data(csv: object) -> pd.DataFrame:
 BASE_DATE_FOR_FALLBACK = pd.Timestamp("2025-07-08")
 
 def load_km_store() -> dict:
-    return load_json_config(resolve_config_path("linhas_km_config.json"))
+    return load_json_config(CONFIG_PATH_KM)
 
 def save_km_store(store: dict) -> bool:
-    return save_json_config(resolve_config_path("linhas_km_config.json"), store)
+    return save_json_config(CONFIG_PATH_KM, store)
 
 def append_km_record(store: dict, line: str, inicio: pd.Timestamp, km: float, fim: Optional[pd.Timestamp] = None):
     """Acrescenta uma vigência. Se houver período em aberto, encerra no dia anterior ao novo início."""
@@ -511,10 +451,10 @@ def apply_km_vigente(df_in: pd.DataFrame, store: dict) -> pd.DataFrame:
 # Veículos por linha com vigências (configurados/em operação)
 # ------------------------------
 def load_veic_store() -> dict:
-    return load_json_config(resolve_config_path("linhas_veic_config.json"))
+    return load_json_config(CONFIG_PATH_VEIC)
 
 def save_veic_store(store: dict) -> bool:
-    return save_json_config(resolve_config_path("linhas_veic_config.json"), store)
+    return save_json_config(CONFIG_PATH_VEIC, store)
 
 def append_veic_record(store: dict, line: str, inicio: pd.Timestamp, veic: float, fim: Optional[pd.Timestamp] = None):
     line = str(line)
@@ -575,27 +515,6 @@ def apply_veic_vigente(df_in: pd.DataFrame, store: dict) -> pd.DataFrame:
 # ------------------------------
 # Entrada do arquivo
 # ------------------------------
-# Override opcional via upload de JSONs
-with st.sidebar.expander("🔧 Parâmetros (JSON)", expanded=False):
-    cfg_upload_categ = st.file_uploader("linhas_config.json", type=["json"], key="upload_categ")
-    cfg_upload_km    = st.file_uploader("linhas_km_config.json", type=["json"], key="upload_km")
-    cfg_upload_veic  = st.file_uploader("linhas_veic_config.json", type=["json"], key="upload_veic")
-    if cfg_upload_categ is not None:
-        try:
-            cfg_categ = _json_relax(cfg_upload_categ.read().decode("utf-8", "ignore"))
-        except Exception as e:
-            st.warning(f"Falha ao ler linhas_config.json enviado: {e}")
-    if cfg_upload_km is not None:
-        try:
-            km_store = _json_relax(cfg_upload_km.read().decode("utf-8", "ignore"))
-        except Exception as e:
-            st.warning(f"Falha ao ler linhas_km_config.json enviado: {e}")
-    if cfg_upload_veic is not None:
-        try:
-            veic_store = _json_relax(cfg_upload_veic.read().decode("utf-8", "ignore"))
-        except Exception as e:
-            st.warning(f"Falha ao ler linhas_veic_config.json enviado: {e}")
-
 st.sidebar.title("⚙️ Configurações")
 # Campo para upload de arquivo CSV pelo usuário
 uploaded_file = st.sidebar.file_uploader("Carregue o arquivo de dados (CSV ';')", type=["csv"])
@@ -614,7 +533,7 @@ st.caption("*Baseado exclusivamente nos dados existentes do arquivo .CSV importa
 # ------------------------------
 if "Nome Linha" in df.columns:
     st.sidebar.header("Classificação de Linhas")
-    cfg_categ = load_json_config(resolve_config_path("linhas_config.json"))
+    cfg_categ = load_json_config(CONFIG_PATH_CATEG)
     valid_vals = {"Urbana", "Distrital"}
     cfg_categ = {k: (v if v in valid_vals else None) for k, v in cfg_categ.items() if isinstance(k, str)}
     linhas_unicas = sorted([x for x in df["Nome Linha"].dropna().astype(str).unique()])
@@ -635,12 +554,12 @@ if "Nome Linha" in df.columns:
                 for l in sel_distritais:
                     if l not in novo_cfg:
                         novo_cfg[l] = "Distrital"
-                if save_json_config(resolve_config_path("linhas_config.json"), novo_cfg):
+                if save_json_config(CONFIG_PATH_CATEG, novo_cfg):
                     st.success("Classificação salva.")
                     cfg_categ = novo_cfg
         with col_s2:
             if st.button("↩️ Reset (limpar)", use_container_width=True):
-                if save_json_config(resolve_config_path("linhas_config.json"), {}):
+                if save_json_config(CONFIG_PATH_CATEG, {}):
                     st.warning("Classificação removida.")
                     cfg_categ = {}
 
@@ -767,31 +686,1312 @@ if "Nome Linha" in df_filtered.columns:
         df_filtered = df_filtered[df_filtered["Nome Linha"].isin(sel_linhas)]
 
 # Categoria
-
 if "Categoria Linha" in df_filtered.columns:
-    import unicodedata
-    def _norm_txt(s):
-        try: s = str(s)
-        except: s = ""
-        s = unicodedata.normalize("NFKD", s)
-        s = "".join(c for c in s if not unicodedata.combining(c))
-        return s.strip().lower()
-    _aliases = {"urbanas":"urbana","urbana":"urbana","urbano":"urbana",
-                "distritais":"distrital","distrital":"distrital","distrito":"distrital"}
-    cat_series = df_filtered["Categoria Linha"].astype(str)
-    present_keys = {}
-    for v in cat_series.dropna().unique():
-        k = _aliases.get(_norm_txt(v), _norm_txt(v))
-        present_keys.setdefault(k, v)
-    display_opts = ["Todas"] + sorted(present_keys.values())
-    cat_opt = st.sidebar.selectbox("Categoria", options=display_opts, index=0)
+    cat_opt = st.sidebar.selectbox("Categoria", options=["Todas", "Urbanas", "Distritais"], index=0)
     if cat_opt != "Todas":
-        sel_key = _aliases.get(_norm_txt(cat_opt), _norm_txt(cat_opt))
-        mask = cat_series.map(lambda x: _aliases.get(_norm_txt(x), _norm_txt(x))) == sel_key
-        if mask.any():
-            df_filtered = df_filtered[mask]
+        df_filtered = df_filtered[df_filtered["Categoria Linha"] == ("Urbana" if cat_opt == "Urbanas" else "Distrital")]
+
+# Veículo
+if "Numero Veiculo" in df_filtered.columns:
+    veics = sorted([str(x) for x in df_filtered["Numero Veiculo"].dropna().astype(str).unique().tolist()])
+    sel_veics = st.sidebar.multiselect("Veículos", veics)
+    if sel_veics:
+        df_filtered = df_filtered[df_filtered["Numero Veiculo"].astype(str).isin(sel_veics)]
+
+# Terminal
+# Expurgo / Visualização
+st.sidebar.header("Expurgo de viagens")
+expurgar_zero = st.sidebar.checkbox("Expurgar viagens com 0 passageiros", value=False)
+expurgar_trein = st.sidebar.checkbox("Expurgar motoristas em treinamento", value=False)
+modo_visu = st.sidebar.selectbox("Modo de visualização", options=["Normal", "Apenas expurgados"], index=0)
+
+# Como identificar "treinamento"
+possiveis_col_status = [c for c in ["Descricao Tipo Evento","Tipo Viagem","Observacao","Grupo Veiculo","Categoria Linha","Cobrador/Operador","Matricula"] if c in df_filtered.columns]
+col_status = st.sidebar.selectbox("Coluna para identificar treinamento", options=["(automático)"] + possiveis_col_status, index=0)
+palavras_trein = st.sidebar.text_input("Palavras-chave (separadas por vírgula)", value="trein, treinamento")
+
+def make_training_mask(df_in):
+    if col_status != "(automático)":
+        serie = df_in[col_status].astype(str).str.lower()
+        keys = [p.strip().lower() for p in palavras_trein.split(",") if p.strip()]
+        if not keys:
+            return pd.Series(False, index=df_in.index)
+        pat = "|".join([re.escape(k) for k in keys])
+        return serie.str.contains(pat, na=False)
+    else:
+        # tenta em colunas possíveis
+        keys = [p.strip().lower() for p in palavras_trein.split(",") if p.strip()]
+        if not keys:
+            return pd.Series(False, index=df_in.index)
+        pat = "|".join([re.escape(k) for k in keys])
+        for cc in possiveis_col_status:
+            if df_in[cc].astype(str).str.contains(pat, case=False, na=False).any():
+                return df_in[cc].astype(str).str.contains(pat, case=False, na=False)
+        return pd.Series(False, index=df_in.index)
+
+mask_zero = pd.Series(False, index=df_filtered.index)
+if "Passageiros" in df_filtered.columns:
+    mask_zero = df_filtered["Passageiros"].fillna(0) <= 0
+
+mask_trein = make_training_mask(df_filtered) if expurgar_trein or modo_visu=="Apenas expurgados" else pd.Series(False, index=df_filtered.index)
+
+if modo_visu == "Apenas expurgados":
+    # Se nenhum critério marcado, não filtra
+    criterio = pd.Series(False, index=df_filtered.index)
+    if expurgar_zero:
+        criterio = criterio | mask_zero
+    if expurgar_trein:
+        criterio = criterio | mask_trein
+    if criterio.any():
+        df_filtered = df_filtered[criterio]
+    else:
+        st.sidebar.info("Ative pelos menos um critério para visualizar apenas expurgados.")
+else:
+    # Modo normal: removemos os expurgados marcados
+    if expurgar_zero:
+        df_filtered = df_filtered[~mask_zero]
+    if expurgar_trein:
+        df_filtered = df_filtered[~mask_trein]
+
+if "Descricao Terminal" in df_filtered.columns:
+    terms = sorted([x for x in df_filtered["Descricao Terminal"].dropna().unique().tolist()])
+    sel_terms = st.sidebar.multiselect("Terminais", terms)
+    if sel_terms:
+        df_filtered = df_filtered[df_filtered["Descricao Terminal"].isin(sel_terms)]
+
+# Parâmetros de alerta
+st.sidebar.header("Alertas")
+thr_dist_alta = st.sidebar.number_input("Distância alta (km) ≥", min_value=0.0, value=20.0, step=1.0, format="%.0f")
+thr_pax_baixa = st.sidebar.number_input("Passageiros baixos ≤", min_value=0, value=5, step=1, format="%d")
+
+# Parâmetros financeiros
+st.sidebar.header("Financeiro")
+tarifa_usuario = st.sidebar.number_input("Tarifa ao usuário (R$)", min_value=0.0, value=2.00, step=0.10, format="%.2f")
+subsidio_pagante = st.sidebar.number_input("Subsídio por pagante (R$)", min_value=0.0, value=4.20, step=0.10, format="%.2f")
+
+# ------------------------------
+# KPIs
+# ------------------------------
+kpi_cols = st.columns(6)
+
+# Passageiros total
+total_pax = df_filtered["Passageiros"].sum() if "Passageiros" in df_filtered.columns else 0
+kpi_cols[0].metric("👥 Passageiros", fmt_int(total_pax))
+
+# Viagens registradas
+viagens = len(df_filtered)
+kpi_cols[1].metric("🧭 Viagens registradas", fmt_int(viagens))
+
+# Distância total (usa distância configurada quando existir)
+if "Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any():
+    dist_total = df_filtered["Distancia_cfg_km"].sum(min_count=1)
+else:
+    dist_total = df_filtered["Distancia"].sum() if "Distancia" in df_filtered.columns else 0.0
+kpi_cols[2].metric("🛣️ Distância total (km)", fmt_float(dist_total, 1))
+
+# Média pax/viagem
+media_pax = (total_pax / viagens) if viagens > 0 else 0.0
+kpi_cols[3].metric("📈 Média pax/viagem", fmt_float(media_pax, 2))
+
+# Veículos (IDs distintos na base filtrada)
+veics_ids = df_filtered["Numero Veiculo"].nunique() if "Numero Veiculo" in df_filtered.columns else 0
+kpi_cols[4].metric("🚌 Veículos (IDs distintos)", fmt_int(veics_ids))
+
+# Linhas ativas
+linhas_ativas = df_filtered["Nome Linha"].nunique() if "Nome Linha" in df_filtered.columns else 0
+kpi_cols[5].metric("🧵 Linhas ativas", fmt_int(linhas_ativas))
+
+# --- Financeiro (com base nas colunas existentes) ---
+paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
+integration_cols_all = ["Quant Passagem Integracao","Quant Passe Integracao","Quant Vale Transporte Integracao"]
+present_paying = [c for c in paying_cols_all if c in df_filtered.columns]
+present_integration = [c for c in integration_cols_all if c in df_filtered.columns]
+
+total_pagantes = float(df_filtered[present_paying].sum().sum()) if present_paying else 0.0
+total_integracoes = float(df_filtered[present_integration].sum().sum()) if present_integration else 0.0
+total_gratuidade = float(df_filtered["Quant Gratuidade"].sum()) if "Quant Gratuidade" in df_filtered.columns else 0.0
+
+receita_tarifaria = total_pagantes * float(tarifa_usuario)
+subsidio_total = total_pagantes * float(subsidio_pagante)
+receita_total = receita_tarifaria + subsidio_total
+
+pax_total_calc = float(total_pax) if pd.notna(total_pax) else 0.0
+custo_publico_por_pax_total = (subsidio_total / pax_total_calc) if pax_total_calc > 0 else 0.0
+
+st.subheader("💰 Indicadores financeiros (parâmetros na barra lateral)")
+fin_cols = st.columns(7)
+fin_cols[0].metric("Pagantes", fmt_int(total_pagantes))
+fin_cols[1].metric("Integrações (sem custo)", fmt_int(total_integracoes))
+fin_cols[2].metric("Gratuidades", fmt_int(total_gratuidade))
+fin_cols[3].metric("Receita tarifária", fmt_currency(receita_tarifaria, 2))
+fin_cols[4].metric("Subsídio total", fmt_currency(subsidio_total, 2))
+fin_cols[5].metric("Custo público/pax", fmt_currency(custo_publico_por_pax_total, 2))
+fin_cols[6].metric("Receita total", fmt_currency(receita_total, 2))
+
+# ---------- NOVOS INDICADORES ----------
+# IPK (passageiros por km)
+ipk_total    = (total_pax / dist_total)     if dist_total and dist_total > 0 else 0.0
+ipk_pagantes = (total_pagantes / dist_total) if dist_total and dist_total > 0 else 0.0
+
+# Receita por km rodado (usando receita total)
+receita_por_km = (receita_total / dist_total) if dist_total and dist_total > 0 else 0.0
+
+# Veículos configurados médios no período: média por linha e soma
+if "Veiculos_cfg" in df_filtered.columns and df_filtered["Veiculos_cfg"].notna().any():
+    veic_cfg_por_linha = df_filtered.groupby("Nome Linha", observed=False)["Veiculos_cfg"].mean(numeric_only=True)
+    veic_cfg_total_medio = veic_cfg_por_linha.sum()
+else:
+    veic_cfg_total_medio = 0.0
+
+# Receita por veículo configurado
+receita_por_veic_cfg = (receita_total / veic_cfg_total_medio) if veic_cfg_total_medio and veic_cfg_total_medio > 0 else 0.0
+
+# Médias por veículo configurado
+viagens_por_veic = (viagens / veic_cfg_total_medio) if veic_cfg_total_medio and veic_cfg_total_medio > 0 else 0.0
+km_por_veic      = (dist_total / veic_cfg_total_medio) if veic_cfg_total_medio and veic_cfg_total_medio > 0 else 0.0
+pax_por_veic     = (total_pax / veic_cfg_total_medio)  if veic_cfg_total_medio and veic_cfg_total_medio > 0 else 0.0
+
+# Bloco de KPIs adicionais
+st.subheader("🚀 Indicadores avançados")
+colA, colB, colC, colD, colE = st.columns(5)
+colA.metric("IPK total (pax/km)", fmt_float(ipk_total, 3))
+colB.metric("IPK pagantes (pax/km)", fmt_float(ipk_pagantes, 3))
+colC.metric("Receita por km", fmt_currency(receita_por_km, 2))
+colD.metric("Veículos configurados (média)", fmt_float(veic_cfg_total_medio, 2))
+colE.metric("Receita por veículo", fmt_currency(receita_por_veic_cfg, 2))
+
+# KPIs médios por veículo
+colF, colG, colH = st.columns(3)
+colF.metric("Viagens por veículo", fmt_float(viagens_por_veic, 2))
+colG.metric("KM por veículo", fmt_float(km_por_veic, 2))
+colH.metric("Passageiros por veículo", fmt_float(pax_por_veic, 2))
+
+# ------------------------------
+# Gráficos
+# ------------------------------
+
+
+# ------------------------------
+# Indicadores por motorista
+# ------------------------------
+st.subheader("🧑‍✈️ Indicadores por motorista")
+
+motorista_col = None
+for cc in ["Cobrador/Operador", "Matricula"]:
+    if cc in df_filtered.columns:
+        motorista_col = cc
+        break
+
+if motorista_col is None:
+    st.info("Não encontrei colunas de motorista (ex.: 'Cobrador/Operador' ou 'Matricula').")
+else:
+    # Agregações por motorista
+    dist_col_drv = "Distancia_cfg_km" if ("Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in df_filtered.columns else None)
+    grp_m = df_filtered.groupby(motorista_col, observed=False)
+
+    viagens_m = grp_m.size().rename("Viagens")
+    pax_m = grp_m["Passageiros"].sum(numeric_only=True) if "Passageiros" in df_filtered.columns else pd.Series(0, index=viagens_m.index)
+    km_m = grp_m[dist_col_drv].sum(numeric_only=True) if dist_col_drv else pd.Series(0.0, index=viagens_m.index)
+
+    paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
+    present_paying_m = [c for c in paying_cols_all if c in df_filtered.columns]
+    if present_paying_m:
+        pag_df = grp_m[present_paying_m].sum(numeric_only=True)
+        pag_m = pag_df.sum(axis=1)
+    else:
+        pag_m = pd.Series(0.0, index=viagens_m.index)
+
+    receita_m = pag_m * (float(tarifa_usuario) + float(subsidio_pagante))
+
+    # ---------- NOVO: Aproveitamento (horas trabalhadas vs carga diária 7:20) ----------
+    REF_HOURS = 7 + 20/60  # 7h20 = 7.333...
+    start_col = "Data Hora Inicio Operacao" if "Data Hora Inicio Operacao" in df_filtered.columns else None
+    end_col   = "Data Hora Final Operacao" if "Data Hora Final Operacao" in df_filtered.columns else None
+
+    util_df = pd.DataFrame()
+    if start_col and end_col:
+        tmp = df_filtered[[motorista_col, start_col, end_col]].copy()
+        tmp["dur_h"] = (pd.to_datetime(tmp[end_col], errors="coerce") - pd.to_datetime(tmp[start_col], errors="coerce")).dt.total_seconds() / 3600.0
+        # remove negativos/zeros
+        tmp.loc[(tmp["dur_h"] <= 0) | ~np.isfinite(tmp["dur_h"]), "dur_h"] = np.nan
+        # dia de referência (do início); fallback para Data Coleta
+        if "Data Coleta" in df_filtered.columns:
+            tmp["dia_ref"] = pd.to_datetime(df_filtered["Data Coleta"], errors="coerce").dt.date
         else:
-            st.warning("Nenhum registro encontrado para a categoria selecionada. Mantendo todos os registros.")
+            tmp["dia_ref"] = pd.to_datetime(df_filtered[start_col], errors="coerce").dt.date
+        util_grp = tmp.dropna(subset=["dur_h"]).groupby([motorista_col, "dia_ref"], observed=False)["dur_h"].sum().reset_index()
+        horas_por_motorista = util_grp.groupby(motorista_col, observed=False)["dur_h"].sum()
+        dias_por_motorista = util_grp.groupby(motorista_col, observed=False)["dia_ref"].nunique()
+        aproveitamento_pct = horas_por_motorista / (dias_por_motorista * REF_HOURS)
+        aproveitamento_pct = aproveitamento_pct.replace([np.inf, -np.inf], np.nan)
+    else:
+        horas_por_motorista = pd.Series(dtype=float)
+        dias_por_motorista = pd.Series(dtype=float)
+        aproveitamento_pct = pd.Series(dtype=float)
+
+    # KPIs médios por motorista (sobre o conjunto filtrado)
+    n_motoristas = len(viagens_m.index)
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Motoristas distintos", fmt_int(n_motoristas))
+    k2.metric("Média de viagens/motorista", fmt_float((viagens / n_motoristas) if n_motoristas else 0, 2))
+    k3.metric("Média de pax/motorista", fmt_float((total_pax / n_motoristas) if n_motoristas else 0, 2))
+    k4.metric("Média de km/motorista", fmt_float((dist_total / n_motoristas) if n_motoristas else 0, 2))
+    k5.metric("Média de receita/motorista", fmt_currency((receita_total / n_motoristas) if n_motoristas else 0, 2))
+
+    # Bloco de aproveitamento agregado
+    st.markdown("**Aproveitamento (horas trabalhadas ÷ 7:20 por dia)**")
+    if not aproveitamento_pct.empty:
+        media_aprov = float(np.nanmean(aproveitamento_pct.values)) if len(aproveitamento_pct) else np.nan
+        pct_full = float(np.mean(aproveitamento_pct >= 1.0)) if len(aproveitamento_pct) else 0.0
+        pct_baixo = float(np.mean(aproveitamento_pct <= 0.8)) if len(aproveitamento_pct) else 0.0
+        a1, a2, a3 = st.columns(3)
+        a1.metric("Média de aproveitamento", fmt_pct(media_aprov, 1))
+        a2.metric("% motoristas ≥ 100%", fmt_pct(pct_full, 1))
+        a3.metric("% motoristas ≤ 80%", fmt_pct(pct_baixo, 1))
+    else:
+        st.info("Para calcular o aproveitamento, são necessários 'Data Hora Inicio Operacao' e 'Data Hora Final Operacao'.")
+
+    # Rankings
+    st.markdown("**Rankings por motorista (Top 20)**")
+    colM1, colM2, colM3, colM4, colM5 = st.columns(5)
+
+    with colM1:
+        top_pax = pd.DataFrame({"Motorista": pax_m.index, "Passageiros": pax_m.values}).sort_values("Passageiros", ascending=False).head(20)
+        top_pax["Passageiros"] = top_pax["Passageiros"].apply(fmt_int)
+        st.caption("Mais passageiros")
+        st.dataframe(top_pax, use_container_width=True)
+
+    with colM2:
+        top_viag = pd.DataFrame({"Motorista": viagens_m.index, "Viagens": viagens_m.values}).sort_values("Viagens", ascending=False).head(20)
+        top_viag["Viagens"] = top_viag["Viagens"].apply(fmt_int)
+        st.caption("Mais viagens")
+        st.dataframe(top_viag, use_container_width=True)
+
+    with colM3:
+        top_km = pd.DataFrame({"Motorista": km_m.index, "KM": km_m.values}).sort_values("KM", ascending=False).head(20)
+        top_km["KM"] = top_km["KM"].apply(lambda v: fmt_float(v, 1))
+        st.caption("Mais KM")
+        st.dataframe(top_km, use_container_width=True)
+
+    with colM4:
+        top_rec = pd.DataFrame({"Motorista": receita_m.index, "Receita": receita_m.values}).sort_values("Receita", ascending=False).head(20)
+        top_rec["Receita"] = top_rec["Receita"].apply(lambda v: fmt_currency(v, 2))
+        st.caption("Mais receita")
+        st.dataframe(top_rec, use_container_width=True)
+
+    with colM5:
+        if not aproveitamento_pct.empty:
+            top_aprov = aproveitamento_pct.sort_values(ascending=False).head(20).reset_index()
+            top_aprov.columns = ["Motorista", "Aproveitamento"]
+            top_aprov["Aproveitamento"] = top_aprov["Aproveitamento"].apply(lambda v: fmt_pct(v, 1))
+            st.caption("Maior aproveitamento")
+            st.dataframe(top_aprov, use_container_width=True)
+        else:
+            st.caption("Maior aproveitamento")
+            st.info("Sem dados suficientes para o ranking de aproveitamento.")
+
+
+# ------------------------------
+# Motoristas com menores valores (Bottom 20)
+# ------------------------------
+st.markdown("**Motoristas com menores valores (Bottom 20)**")
+colB1, colB2, colB3, colB4, colB5 = st.columns(5)
+
+with colB1:
+    bot_pax = pd.DataFrame({"Motorista": pax_m.index, "Passageiros": pax_m.fillna(0).values}).sort_values("Passageiros", ascending=True).head(20)
+    bot_pax["Passageiros"] = bot_pax["Passageiros"].apply(fmt_int)
+    st.caption("Menos passageiros")
+    st.dataframe(bot_pax, use_container_width=True)
+
+with colB2:
+    bot_viag = pd.DataFrame({"Motorista": viagens_m.index, "Viagens": pd.Series(viagens_m).fillna(0).values}).sort_values("Viagens", ascending=True).head(20)
+    bot_viag["Viagens"] = bot_viag["Viagens"].apply(fmt_int)
+    st.caption("Menos viagens")
+    st.dataframe(bot_viag, use_container_width=True)
+
+with colB3:
+    _km_series = pd.Series(km_m).fillna(0)
+    bot_km = pd.DataFrame({"Motorista": _km_series.index, "KM": _km_series.values}).sort_values("KM", ascending=True).head(20)
+    bot_km["KM"] = bot_km["KM"].apply(lambda v: fmt_float(v, 1))
+    st.caption("Menos KM")
+    st.dataframe(bot_km, use_container_width=True)
+
+with colB4:
+    _rec_series = pd.Series(receita_m).fillna(0)
+    bot_rec = pd.DataFrame({"Motorista": _rec_series.index, "Receita": _rec_series.values}).sort_values("Receita", ascending=True).head(20)
+    bot_rec["Receita"] = bot_rec["Receita"].apply(lambda v: fmt_currency(v, 2))
+    st.caption("Menos receita")
+    st.dataframe(bot_rec, use_container_width=True)
+
+with colB5:
+    if not aproveitamento_pct.empty:
+        _ap_series = pd.Series(aproveitamento_pct).fillna(0)
+        bot_aprov = _ap_series.sort_values(ascending=True).head(20).reset_index()
+        bot_aprov.columns = ["Motorista", "Aproveitamento"]
+        bot_aprov["Aproveitamento"] = bot_aprov["Aproveitamento"].apply(lambda v: fmt_pct(v, 1))
+        st.caption("Menor aproveitamento")
+        st.dataframe(bot_aprov, use_container_width=True)
+    else:
+        st.caption("Menor aproveitamento")
+        st.info("Sem dados suficientes para o ranking de aproveitamento.")
+
+
+# ------------------------------
+# 🔎 Detalhes do motorista (seleção consolidada)
+# ------------------------------
+try:
+    candidates_set = set()
+    for varname in ["top_pax","top_viag","top_km","top_rec","top_aprov","bot_pax","bot_viag","bot_km","bot_rec","bot_aprov"]:
+        if varname in locals():
+            df_tmp = locals()[varname]
+            if isinstance(df_tmp, pd.DataFrame) and "Motorista" in df_tmp.columns:
+                candidates_set.update([str(x) for x in df_tmp["Motorista"].dropna().astype(str).tolist()])
+    candidates = sorted(list(candidates_set))
+    sel_any = select_motorista_widget(candidates, key="sel_any_motorista", label="🔎 Ver detalhes (Top/Bottom)")
+    if sel_any and sel_any != "(selecione)":
+        show_motorista_details(sel_any, df_filtered)
+except Exception as _e:
+    pass
+
+
+# ------------------------------
+# IA (Beta)
+# ------------------------------
+st.sidebar.header("🤖 IA (Beta)")
+
+ai_perf = st.sidebar.checkbox("Score de performance de motoristas (ajustado por contexto)", value=False, help="Compara o que o motorista entregou vs o esperado para o contexto da viagem.")
+ai_cluster = st.sidebar.checkbox("Clusterização de linhas (K-Means)", value=False, help="Agrupa linhas por perfil operacional.")
+k_clusters = st.sidebar.slider("Clusters (linhas)", min_value=2, max_value=8, value=4, step=1)
+
+ai_anom = st.sidebar.checkbox("Detecção de anomalias (IsolationForest)", value=False, help="Identifica viagens atípicas com base em múltiplos sinais.")
+ai_fore = st.sidebar.checkbox("Previsão de demanda por linha (Prophet)", value=False, help="Prevê passageiros por dia/linha para planejamento.")
+contam = st.sidebar.slider("Anomalias: fração esperada (%)", min_value=1, max_value=10, value=3, step=1, help="Percentual aproximado de outliers no conjunto.", format="%d%%")
+forecast_horizon = st.sidebar.number_input("Previsão: horizonte (dias)", min_value=7, max_value=90, value=30, step=1)
+linha_opts = ["(auto)"]
+if "Nome Linha" in df_filtered.columns:
+    linha_opts += sorted([x for x in df_filtered["Nome Linha"].dropna().astype(str).unique().tolist()])
+line_for_forecast = st.sidebar.selectbox("Linha para previsão", options=linha_opts, index=0)
+
+# ---------- Detecção de anomalias ----------
+anomias_df = pd.DataFrame()
+if ai_anom:
+    st.subheader("⚠️ Detecção de anomalias (IsolationForest)")
+    if not _HAS_SKLEARN:
+        st.error("scikit-learn não encontrado. Instale com: `pip install scikit-learn`")
+    else:
+        # Montagem de features
+        base = df_filtered.copy()
+        # Coluna de distância
+        dist_col_x = "Distancia_cfg_km" if ("Distancia_cfg_km" in base.columns and base["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in base.columns else None)
+        # Duração
+        if {"Data Hora Inicio Operacao","Data Hora Final Operacao"}.issubset(base.columns):
+            di = pd.to_datetime(base["Data Hora Inicio Operacao"], errors="coerce")
+            df_ = pd.to_datetime(base["Data Hora Final Operacao"], errors="coerce")
+            dur_min = (df_ - di).dt.total_seconds() / 60.0
+        else:
+            dur_min = pd.Series(np.nan, index=base.index)
+        # Hora/Dia
+        hora_b = base["Hora_Base"] if "Hora_Base" in base.columns else pd.Series(np.nan, index=base.index)
+        dow_b  = base["DiaSemana_Base"] if "DiaSemana_Base" in base.columns else pd.Series(np.nan, index=base.index)
+        # Quantitativos
+        pax = base["Passageiros"] if "Passageiros" in base.columns else pd.Series(np.nan, index=base.index)
+        grat = base["Quant Gratuidade"] if "Quant Gratuidade" in base.columns else pd.Series(0.0, index=base.index)
+        paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
+        present_paying_loc = [c for c in paying_cols_all if c in base.columns]
+        pag = base[present_paying_loc].sum(axis=1) if present_paying_loc else pd.Series(0.0, index=base.index)
+        veic_cfg = base["Veiculos_cfg"] if "Veiculos_cfg" in base.columns else pd.Series(np.nan, index=base.index)
+        # Encodes simples para linha e motorista (opcionais)
+        lin_code = base["Nome Linha"].cat.codes if "Nome Linha" in base.columns and str(base["Nome Linha"].dtype).startswith("category") else pd.Categorical(base["Nome Linha"]).codes if "Nome Linha" in base.columns else pd.Series(np.nan, index=base.index)
+        mot_col = "Cobrador/Operador" if "Cobrador/Operador" in base.columns else ("Matricula" if "Matricula" in base.columns else None)
+        mot_code = (pd.Categorical(base[mot_col]).codes if mot_col else pd.Series(np.nan, index=base.index))
+
+        feats = pd.DataFrame({
+            "pax": pax,
+            "km": base[dist_col_x] if dist_col_x else np.nan,
+            "dur_min": dur_min,
+            "hora": hora_b,
+            "dow": dow_b,
+            "grat": grat,
+            "pag": pag,
+            "veic_cfg": veic_cfg,
+            "lin": lin_code,
+            "mot": mot_code,
+        })
+        feats = feats.replace([np.inf, -np.inf], np.nan).dropna()
+        if len(feats) < 20:
+            st.info("Dados insuficientes para treinar o modelo de anomalias (mín. 20 linhas com features completas).")
+        else:
+            iso = IsolationForest(
+                n_estimators=200,
+                contamination=contam/100.0,
+                random_state=42,
+            )
+            iso.fit(feats.values)
+            pred = iso.predict(feats.values)        # -1 = anômalo, 1 = normal
+            score = -iso.decision_function(feats.values)  # maior = mais anômalo
+            anom_mask = (pred == -1)
+            idx_rows = feats.index
+            base_sub = base.loc[idx_rows].copy()
+            base_sub["anomalia"] = anom_mask
+            base_sub["score_anomalia"] = pd.Series(score, index=idx_rows)
+            anomias_df = base_sub[base_sub["anomalia"]].sort_values("score_anomalia", ascending=False)
+
+            # Gráfico: Passageiros x Distância (ou duração), colorindo anomalias
+            xcol = dist_col_x if dist_col_x else "dur_min"
+            if xcol in base_sub.columns or xcol == "dur_min":
+                x_series = base_sub[xcol] if xcol in base_sub.columns else feats["dur_min"]
+                graf = pd.DataFrame({
+                    "x": x_series,
+                    "Passageiros": base_sub["Passageiros"] if "Passageiros" in base_sub.columns else np.nan,
+                    "anom": base_sub["anomalia"],
+                })
+                fig = px.scatter(graf, x="x", y="Passageiros", color="anom", title="Anomalias: Passageiros vs " + ("Distância (km)" if xcol==dist_col_x else "Duração (min)"))
+                fig.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=380, legend_title_text="Anômalo?")
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.caption("Top anomalias (ordenadas por severidade)")
+            cols_show = [c for c in ["Data Coleta","Nome Linha","Numero Veiculo","Descricao Terminal","Passageiros"] if c in anomias_df.columns]
+            if dist_col_x and dist_col_x in anomias_df.columns:
+                cols_show += [dist_col_x]
+            if "score_anomalia" in anomias_df.columns:
+                cols_show += ["score_anomalia"]
+            preview = anomias_df[cols_show].head(100).copy()
+            if "Passageiros" in preview.columns:
+                preview["Passageiros"] = preview["Passageiros"].apply(fmt_int)
+            if dist_col_x and dist_col_x in preview.columns:
+                preview[dist_col_x] = preview[dist_col_x].apply(lambda v: fmt_float(v, 1))
+            if "score_anomalia" in preview.columns:
+                preview["score_anomalia"] = preview["score_anomalia"].apply(lambda v: fmt_float(v, 3))
+            st.dataframe(preview, use_container_width=True)
+
+            # Exportação
+            @st.cache_data(show_spinner=False)
+            def _anom_csv(df_in: pd.DataFrame) -> bytes:
+                return df_in.to_csv(index=False, sep=";", decimal=",").encode("utf-8")
+            st.download_button("Baixar anomalias (CSV ;)", data=_anom_csv(anomias_df), file_name="anomalias_viagens.csv", mime="text/csv")
+
+
+# ---------- Score de performance de motoristas (ajustado por contexto) ----------
+if ai_perf:
+    st.subheader("🏁 Performance de motoristas (ajustada por contexto)")
+    if not _HAS_SKLEARN:
+        st.error("scikit-learn não encontrado. Instale com: `pip install scikit-learn`")
+    else:
+        base = df_filtered.copy()
+        # Requisitos mínimos
+        need_cols = ["Passageiros"]
+        if not all(c in base.columns for c in need_cols):
+            st.info("É necessário ter a coluna 'Passageiros' para calcular o score.")
+        else:
+            # Variáveis de contexto
+            # Distância
+            dist_col = "Distancia_cfg_km" if ("Distancia_cfg_km" in base.columns and base["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in base.columns else None)
+            if dist_col is None:
+                base["__km__"] = np.nan
+                dist_col = "__km__"
+            # Duração (min)
+            if {"Data Hora Inicio Operacao","Data Hora Final Operacao"}.issubset(base.columns):
+                di = pd.to_datetime(base["Data Hora Inicio Operacao"], errors="coerce")
+                df_ = pd.to_datetime(base["Data Hora Final Operacao"], errors="coerce")
+                base["dur_min"] = (df_ - di).dt.total_seconds() / 60.0
+            else:
+                base["dur_min"] = np.nan
+            # Hora/Dia
+            base["hora"] = base["Hora_Base"] if "Hora_Base" in base.columns else np.nan
+            base["dow"]  = base["DiaSemana_Base"] if "DiaSemana_Base" in base.columns else np.nan
+            # Veículos configurados
+            base["veic_cfg_x"] = base["Veiculos_cfg"] if "Veiculos_cfg" in base.columns else np.nan
+            # Categoria (urb/distr)
+            base["cat_lin"] = base["Categoria Linha"].astype(str) if "Categoria Linha" in base.columns else "NA"
+            # Linha
+            base["lin"] = base["Nome Linha"].astype(str) if "Nome Linha" in base.columns else "NA"
+            # Motorista
+            mot_col = "Cobrador/Operador" if "Cobrador/Operador" in base.columns else ("Matricula" if "Matricula" in base.columns else None)
+            base["motorista"] = base[mot_col].astype(str) if mot_col else "NA"
+
+            # Monta df de treino com dummies simples
+            feat_cols = [dist_col, "dur_min", "hora", "dow", "veic_cfg_x"]
+            cat_cols = []
+            if "cat_lin" in base.columns: cat_cols.append("cat_lin")
+            if "lin" in base.columns: cat_cols.append("lin")
+
+            df_model = base[["Passageiros"] + feat_cols + cat_cols + ["motorista"]].copy()
+            df_model = df_model.replace([np.inf, -np.inf], np.nan).dropna(subset=["Passageiros"] + feat_cols)
+
+            # Limita nº de dummies para linhas (evita explosão)
+            if "lin" in cat_cols:
+                # mantém top 30 linhas e agrupa resto em 'OUTRAS'
+                top_linhas = base["lin"].value_counts().head(30).index
+                df_model["lin_grp"] = np.where(df_model["lin"].isin(top_linhas), df_model["lin"], "OUTRAS")
+                cat_cols_use = [c for c in cat_cols if c != "lin"] + ["lin_grp"]
+            else:
+                cat_cols_use = cat_cols
+
+            X = pd.get_dummies(df_model[feat_cols + cat_cols_use], drop_first=True)
+            y = df_model["Passageiros"].astype(float)
+
+            # Remove colunas vazias/constantes
+            X = X.loc[:, X.std(numeric_only=True) > 0]
+
+            if len(X) < 50 or X.isna().any().any():
+                st.info("Dados insuficientes/limpos para treinar o modelo de baseline.")
+            else:
+                try:
+                    model = LinearRegression()
+                    model.fit(X, y)
+                    y_pred = model.predict(X)
+                    resid = y - y_pred  # positivo = acima do esperado
+
+                    df_model = df_model.assign(y_pred=y_pred, resid=resid)
+                    # Agrega por motorista
+                    perf = df_model.groupby("motorista", observed=False).agg(
+                        viagens=("motorista","size"),
+                        pax_real=("Passageiros","sum"),
+                        pax_prev=("y_pred","sum"),
+                        resid_med=("resid","mean"),
+                        resid_tot=("resid","sum")
+                    ).reset_index().sort_values("resid_tot", ascending=False)
+
+                    # Mostra rankings
+                    c1, c2 = st.columns(2)
+                    top_perf = perf.head(20).copy()
+                    top_perf["resid_tot"] = top_perf["resid_tot"].apply(fmt_int)
+                    top_perf["resid_med"] = top_perf["resid_med"].apply(lambda v: fmt_float(v,2))
+                    top_perf["pax_real"] = top_perf["pax_real"].apply(fmt_int)
+                    top_perf["pax_prev"] = top_perf["pax_prev"].apply(fmt_int)
+                    c1.caption("Maior valor agregado (acima do esperado)")
+                    c1.dataframe(top_perf, use_container_width=True)
+
+                    bot_perf = perf.tail(20).copy().sort_values("resid_tot", ascending=True)
+                    bot_perf["resid_tot"] = bot_perf["resid_tot"].apply(fmt_int)
+                    bot_perf["resid_med"] = bot_perf["resid_med"].apply(lambda v: fmt_float(v,2))
+                    bot_perf["pax_real"] = bot_perf["pax_real"].apply(fmt_int)
+                    bot_perf["pax_prev"] = bot_perf["pax_prev"].apply(fmt_int)
+                    c2.caption("Menor valor agregado (abaixo do esperado)")
+                    c2.dataframe(bot_perf, use_container_width=True)
+
+                    # Selecionar motorista para detalhes de performance
+                    cand = perf["motorista"].astype(str).tolist()
+                    selp = st.selectbox("🔎 Ver detalhes de performance (ajustada)", options=["(selecione)"] + cand, index=0, key="sel_perf_motorista")
+                    if selp and selp != "(selecione)":
+                        dfm = df_model[df_model["motorista"].astype(str) == str(selp)]
+                        if not dfm.empty:
+                            st.markdown(f"**Detalhe do motorista {selp}**")
+                            # Série: real vs previsto por data (se houver)
+                            if "Data" in base.columns and base["Data"].notna().any():
+                                base_join = base[["motorista","Data","Passageiros"]].copy()
+                                base_join = base_join[base_join["motorista"].astype(str)==str(selp)]
+                                # agrega por dia
+                                ser_real = base_join.groupby("Data", as_index=False, observed=False)["Passageiros"].sum()
+                                # previsto: usar média do resid por viagem daquele dia (aproximação simples)
+                                st.dataframe(ser_real.head(50))
+                            # Distribuição dos resíduos
+                            import numpy as _np
+                            import plotly.express as _px
+                            try:
+                                figh = _px.histogram(dfm, x="resid", nbins=30, title="Distribuição dos resíduos (real - previsto)")
+                                st.plotly_chart(figh, use_container_width=True)
+                            except Exception:
+                                pass
+                except Exception as e:
+                    st.error(f"Falha no cálculo de performance ajustada: {e}")
+
+# ---------- Previsão de demanda por linha ----------
+if ai_fore:
+    st.subheader("📈 Previsão de passageiros por linha (Prophet)")
+    if not _HAS_PROPHET:
+        st.error("Prophet não encontrado. Instale com: `pip install prophet`")
+    else:
+        # Seleção de linhas a prever
+        dff = df_filtered.copy()
+        if "Data" not in dff.columns or "Passageiros" not in dff.columns or not dff["Data"].notna().any():
+            st.info("São necessários 'Data' e 'Passageiros' agregáveis para a previsão.")
+        else:
+            # Linhas candidatas
+            linhas_disp = sorted([x for x in dff["Nome Linha"].dropna().astype(str).unique().tolist()]) if "Nome Linha" in dff.columns else []
+            if line_for_forecast != "(auto)" and line_for_forecast in linhas_disp:
+                linhas_alvo = [line_for_forecast]
+            else:
+                # Escolhe até 6 linhas com maior volume recente
+                top = (dff.groupby("Nome Linha", observed=False)["Passageiros"].sum().sort_values(ascending=False).head(6).index.tolist()) if "Nome Linha" in dff.columns else []
+                linhas_alvo = top
+
+            if not linhas_alvo:
+                st.info("Nenhuma linha encontrada para previsão.")
+            else:
+                for ln in linhas_alvo:
+                    st.markdown(f"**Linha: {ln}**")
+                    serie = (dff[dff["Nome Linha"] == ln]
+                             .groupby("Data", as_index=False, observed=False)["Passageiros"].sum()
+                             .sort_values("Data"))
+                    serie = serie.dropna(subset=["Data","Passageiros"])
+                    if len(serie) < 14:
+                        st.info("Histórico insuficiente para previsão desta linha (mín. 14 dias).")
+                        continue
+                    ds = pd.to_datetime(serie["Data"])
+                    y = serie["Passageiros"].astype(float)
+                    model_df = pd.DataFrame({"ds": ds, "y": y})
+                    try:
+                        m = Prophet(seasonality_mode="multiplicative", weekly_seasonality=True, yearly_seasonality=False, daily_seasonality=False)
+                        m.fit(model_df)
+                        fut = m.make_future_dataframe(periods=int(forecast_horizon), freq="D", include_history=True)
+                        fc = m.predict(fut)
+                        # Junta real x previsto
+                        fc_vis = fc[["ds","yhat","yhat_lower","yhat_upper"]].merge(model_df, on="ds", how="left")
+                        fc_vis.sort_values("ds", inplace=True)
+                        # Métrica de insight: média últimos 7 dias reais vs próximos 7 previstos
+                        ult7 = model_df.set_index("ds")["y"].last("7D").mean() if not model_df.empty else np.nan
+                        prox7 = fc.set_index("ds")["yhat"].last("7D").mean() if not fc.empty else np.nan
+                        delta = (prox7 - ult7) / ult7 if (pd.notna(ult7) and ult7 not in (0, np.nan)) else np.nan
+
+                        # Gráfico
+                        figf = px.line(fc_vis, x="ds", y=["y","yhat"], labels={"value":"Passageiros","ds":"Data","variable":"Série"}, title=f"Previsão (horizonte {int(forecast_horizon)} dias)")
+                        figf.add_scatter(x=fc_vis["ds"], y=fc_vis["yhat_upper"], mode="lines", name="limite superior", line=dict(dash="dot"))
+                        figf.add_scatter(x=fc_vis["ds"], y=fc_vis["yhat_lower"], mode="lines", name="limite inferior", line=dict(dash="dot"))
+                        figf.update_xaxes(tickformat="%d/%m/%Y")
+                        figf.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=380)
+                        st.plotly_chart(figf, use_container_width=True)
+
+                        # KPIs de insight
+                        cA, cB = st.columns(2)
+                        cA.metric("Média últimos 7 dias (real)", fmt_int(ult7 if pd.notna(ult7) else 0))
+                        cB.metric("Variação esperada (próx. 7 dias)", fmt_pct(delta if pd.notna(delta) else 0, 1))
+                    except Exception as e:
+                        st.error(f"Falha ao ajustar Prophet para a linha {ln}: {e}")
+
+st.subheader("📅 Evolução temporal de passageiros")
+if {"Data", "Passageiros"}.issubset(df_filtered.columns) and df_filtered["Data"].notna().any():
+    serie = df_filtered.groupby("Data", as_index=False, observed=False)["Passageiros"].sum().sort_values("Data")
+    fig = px.line(serie, x="Data", y="Passageiros", markers=True, title="Passageiros por dia")
+    fig.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=350)
+    fig.update_xaxes(tickformat="%d/%m/%Y")
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Sem dados de 'Data Coleta' e 'Passageiros' suficientes para a série temporal.")
+
+left, right = st.columns(2)
+
+with left:
+    st.subheader("🏅 Ranking de linhas por demanda")
+    if {"Nome Linha", "Passageiros"}.issubset(df_filtered.columns):
+        rank = (df_filtered.groupby("Nome Linha", as_index=False, observed=False)["Passageiros"].sum()
+                .sort_values("Passageiros", ascending=False).head(15))
+        # Formatação PT-BR com separador de milhares
+        rank_fmt = rank.copy()
+        rank_fmt["Passageiros"] = rank_fmt["Passageiros"].apply(fmt_int)
+        fig = px.bar(rank, x="Nome Linha", y="Passageiros", title="Top 15 linhas por passageiros")
+        fig.update_layout(xaxis_tickangle=-30, margin=dict(l=10,r=10,t=35,b=10), height=380)
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Tabela (formatada)")
+        st.dataframe(rank_fmt.head(50))
+    else:
+        st.info("Colunas necessárias ausentes: 'Nome Linha' e/ou 'Passageiros'.")
+
+with right:
+    st.subheader("🧾 Distribuição por tipo de tarifa")
+    tarifa_cols = [c for c in df_filtered.columns if c.startswith("Quant ") or c in ["Quant Inteiras"]]
+    tarifa_cols = [c for c in tarifa_cols if df_filtered[c].notna().any()]
+    if tarifa_cols:
+        totais = df_filtered[tarifa_cols].sum().reset_index()
+        totais.columns = ["Tipo", "Quantidade"]
+        totais = totais[totais["Quantidade"] > 0]
+        if not totais.empty:
+            fig = px.pie(totais, names="Tipo", values="Quantidade", hole=0.45, title="Participação por tipo")
+            fig.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=380)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("As colunas de tarifa existem, mas não há valores positivos no filtro atual.")
+    else:
+        st.info("Não foram encontradas colunas de tarifação (Quant * / Quant Inteiras) com dados.")
+
+st.subheader("📍 Relação distância x passageiros")
+x_col = "Distancia_cfg_km" if ("Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in df_filtered.columns else None)
+if x_col and {x_col, "Passageiros"}.issubset(df_filtered.columns) and df_filtered[[x_col,"Passageiros"]].notna().any().any():
+    trendline_kw = {}
+    trendline_note = ""
+    try:
+        import statsmodels.api as sm  # noqa: F401
+        trendline_kw = {"trendline": "ols"}
+    except Exception:
+        trendline_note = " (sem linha de tendência — instale 'statsmodels' para habilitar)"
+    fig = px.scatter(
+        df_filtered,
+        x=x_col,
+        y="Passageiros",
+        hover_data=[c for c in ["Nome Linha","Numero Veiculo","Descricao Terminal","Data Coleta"] if c in df_filtered.columns],
+        title=f"Dispersão: {'Distância configurada' if x_col=='Distancia_cfg_km' else 'Distância de viagem'} (km) x Passageiros" + trendline_note,
+        **trendline_kw
+    )
+    fig.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=380)
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Sem dados suficientes para plotar distância x passageiros.")
+
+st.subheader("⏰ Picos por hora e dia da semana")
+if {"Passageiros"}.issubset(df_filtered.columns):
+    if ("Hora_Base" not in df_filtered.columns) or (not df_filtered["Hora_Base"].notna().any()):
+        for c in ["Data Hora Saida Terminal", "Data Hora Inicio Operacao", "Data Coleta"]:
+            if c in df_filtered.columns:
+                temp_dt = pd.to_datetime(df_filtered[c], errors="coerce")
+                if temp_dt.notna().any():
+                    df_filtered["Hora_Base"] = temp_dt.dt.hour
+                    df_filtered["DiaSemana_Base"] = temp_dt.dt.dayofweek
+                    break
+if {"Hora_Base","DiaSemana_Base","Passageiros"}.issubset(df_filtered.columns) and df_filtered["Hora_Base"].notna().any():
+    heat = (df_filtered.dropna(subset=["Hora_Base","DiaSemana_Base"])
+            .groupby(["DiaSemana_Base","Hora_Base"], as_index=False, observed=False)["Passageiros"].sum())
+    if not heat.empty:
+        heat["DiaSemana_Label"] = heat["DiaSemana_Base"].map({0:"Seg",1:"Ter",2:"Qua",3:"Qui",4:"Sex",5:"Sáb",6:"Dom"})
+        fig = px.density_heatmap(
+            heat,
+            x="Hora_Base", y="DiaSemana_Label", z="Passageiros",
+            histfunc="avg", nbinsx=24, title="Heatmap de demanda (hora x dia)"
+        )
+        fig.update_layout(margin=dict(l=10, r=10, t=35, b=10), height=380)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Não há dados suficientes para o heatmap no filtro atual.")
+else:
+    st.info("Sem colunas de horário adequadas para gerar o heatmap.")
+
+# ------------------------------
+# Alertas
+# ------------------------------
+st.subheader("🚨 Alertas operacionais (baseado apenas nas colunas existentes)")
+alertas = []
+
+# Sem passageiros
+if "Passageiros" in df_filtered.columns:
+    z = df_filtered[df_filtered["Passageiros"].fillna(0) <= 0]
+    if not z.empty:
+        alertas.append(("Viagens sem passageiros", z))
+
+# Distância zero (considera distância configurada, senão a original)
+base_x = "Distancia_cfg_km" if ("Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in df_filtered.columns else None)
+if base_x:
+    dz = df_filtered[df_filtered[base_x].fillna(0) <= 0]
+    if not dz.empty:
+        alertas.append(("Viagens com distância zero", dz))
+
+# Distância alta & baixa demanda
+if base_x and {base_x, "Passageiros"}.issubset(df_filtered.columns):
+    cond = (df_filtered[base_x] >= thr_dist_alta) & (df_filtered["Passageiros"] <= thr_pax_baixa)
+    db = df_filtered[cond]
+    if not db.empty:
+        alertas.append((f"Distância ≥ {thr_dist_alta} km e Passageiros ≤ {thr_pax_baixa}", db))
+
+if alertas:
+    for titulo, df_a in alertas:
+        st.markdown(f"**• {titulo}: {len(df_a)} registros**")
+        with st.expander("Ver amostra"):
+            st.dataframe(df_a.head(100))
+else:
+    st.success("Nenhum alerta gerado com os filtros atuais.")
+
+# ------------------------------
+# Resumos rápidos (com formatação PT-BR)
+# ------------------------------
+st.subheader("📑 Resumos rápidos")
+col_a, col_b = st.columns(2)
+
+with col_a:
+    if {"Nome Linha","Passageiros"}.issubset(df_filtered.columns):
+        g = (df_filtered.groupby("Nome Linha", as_index=False, observed=False)["Passageiros"].sum()
+             .sort_values("Passageiros", ascending=False))
+        st.caption("Passageiros por linha")
+        st.dataframe(df_fmt_milhar(g, ["Passageiros"]).head(50))
+
+        # Receita por linha (pagantes)
+        if present_paying:
+            by_line = df_filtered.groupby("Nome Linha", as_index=False, observed=False)[present_paying].sum()
+            by_line["Pagantes"] = by_line[present_paying].sum(axis=1)
+            by_line["Receita_tarifaria_R$"] = by_line["Pagantes"] * float(tarifa_usuario)
+            by_line["Subsídio_R$"] = by_line["Pagantes"] * float(subsidio_pagante)
+            by_line["Receita_total_R$"] = by_line["Receita_tarifaria_R$"] + by_line["Subsídio_R$"]
+            by_line = by_line[["Nome Linha","Pagantes","Receita_tarifaria_R$","Subsídio_R$","Receita_total_R$"]]
+            by_line = by_line.sort_values("Receita_total_R$", ascending=False)
+            st.caption("Receita por linha (pagantes)")
+            st.dataframe(
+                df_fmt_currency(
+                    df_fmt_milhar(by_line, ["Pagantes"]),
+                    ["Receita_tarifaria_R$","Subsídio_R$","Receita_total_R$"]
+                ).head(50)
+            )
+
+with col_b:
+    # Resumo por veículo (IDs distintos reais) e por veículos configurados
+    if {"Numero Veiculo"}.issubset(df_filtered.columns):
+        dist_col = "Distancia_cfg_km" if ("Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in df_filtered.columns else None)
+        agg_dict = {"Passageiros": ("Passageiros","sum")}
+        if dist_col:
+            agg_dict["Dist_km"] = (dist_col,"sum")
+        g2 = (df_filtered.groupby("Numero Veiculo", as_index=False, observed=False)
+              .agg(**agg_dict)
+              .sort_values("Passageiros", ascending=False if "Passageiros" in df_filtered.columns else True))
+        st.caption("Resumo por veículo (IDs reais na base)")
+        g2_fmt = g2.copy()
+        if "Dist_km" in g2_fmt.columns:
+            g2_fmt["Dist_km"] = g2_fmt["Dist_km"].apply(lambda v: fmt_float(v, 1))
+        if "Passageiros" in g2_fmt.columns:
+            g2_fmt["Passageiros"] = g2_fmt["Passageiros"].apply(fmt_int)
+        st.dataframe(g2_fmt.head(50))
+
+# ------------------------------
+# Tabela consolidada por linha (métricas completas + cores + totalização)
+# ------------------------------
+st.subheader("📘 Tabela consolidada por linha")
+
+if "Nome Linha" in df_filtered.columns:
+    dist_col_tbl = "Distancia_cfg_km" if ("Distancia_cfg_km" in df_filtered.columns and df_filtered["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in df_filtered.columns else None)
+    base_tbl = df_filtered.copy()
+    if dist_col_tbl is None:
+        base_tbl["__dist__"] = 0.0
+        dist_col_tbl = "__dist__"
+    grp = base_tbl.groupby("Nome Linha", observed=False)
+
+    veic_cfg_med_tbl  = grp["Veiculos_cfg"].mean(numeric_only=True) if "Veiculos_cfg" in base_tbl.columns else pd.Series(0.0, index=grp.size().index)
+    veic_ids_uni_tbl  = grp["Numero Veiculo"].nunique() if "Numero Veiculo" in base_tbl.columns else pd.Series(0, index=grp.size().index)
+    km_rodado_tbl     = grp[dist_col_tbl].sum(numeric_only=True)
+    pax_total_tbl     = grp["Passageiros"].sum(numeric_only=True) if "Passageiros" in base_tbl.columns else pd.Series(0, index=grp.size().index)
+    viagens_total_tbl = grp.size()
+    grat_tbl          = grp["Quant Gratuidade"].sum(numeric_only=True) if "Quant Gratuidade" in base_tbl.columns else pd.Series(0.0, index=grp.size().index)
+
+    # Colunas de pagantes (inclui integrações) + fallback por regex
+    paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
+    integration_cols_all = ["Quant Passagem Integracao","Quant Passe Integracao","Quant Vale Transporte Integracao",
+                            "Quant Passagem Integração","Quant Passe Integração","Quant Vale Transporte Integração"]
+    present_paying_l = [c for c in paying_cols_all if c in base_tbl.columns]
+    present_integration_l = [c for c in integration_cols_all if c in base_tbl.columns]
+    # Fallback: qualquer coluna numérica com "Quant" e termos de pagantes (exclui gratuidade)
+    regex_candidates = [c for c in base_tbl.columns if re.search(r"(?i)quant.*(inteir|passag|passe|vale|vt|integra)", c) and not re.search(r"(?i)grat", c)]
+    candidate_cols = []
+    # mantém ordem e remove duplicados
+    for c in present_paying_l + present_integration_l + regex_candidates:
+        if c not in candidate_cols:
+            candidate_cols.append(c)
+    if candidate_cols:
+        pag_by_cols_tbl = grp[candidate_cols].sum(numeric_only=True)
+        pagantes_tbl = pag_by_cols_tbl.sum(axis=1)
+    else:
+        pagantes_tbl = pd.Series(0.0, index=grp.size().index)
+    receita_tar_l_tbl = pagantes_tbl * float(tarifa_usuario)
+    subsidio_l_tbl    = pagantes_tbl * float(subsidio_pagante)
+    receita_tot_l_tbl = receita_tar_l_tbl + subsidio_l_tbl
+
+    pct_grat_s_pag_tbl = grat_tbl / pagantes_tbl.replace(0, np.nan)
+    ipk_total_l_tbl    = pax_total_tbl / km_rodado_tbl.replace(0, np.nan)
+    ipk_pag_l_tbl      = pagantes_tbl / km_rodado_tbl.replace(0, np.nan)
+    rec_por_veic_tbl   = receita_tot_l_tbl / veic_cfg_med_tbl.replace(0, np.nan)
+    rec_por_pax_tbl    = receita_tot_l_tbl / pax_total_tbl.replace(0, np.nan)
+    rec_por_km_tbl     = receita_tot_l_tbl / km_rodado_tbl.replace(0, np.nan)
+    pax_tot_viag_tbl   = pax_total_tbl / viagens_total_tbl.replace(0, np.nan)
+    pag_viag_tbl       = pagantes_tbl / viagens_total_tbl.replace(0, np.nan)
+    giro_veic_tbl      = veic_ids_uni_tbl / veic_cfg_med_tbl.replace(0, np.nan)  # % de giro
+
+    tabela = pd.DataFrame({
+        "Veículos Conf.": veic_cfg_med_tbl,
+        "Veículos (IDs Distintos)": veic_ids_uni_tbl,
+        "% Giro de Veículos": giro_veic_tbl,
+        "Km Rodada": km_rodado_tbl,
+        "Pass. Transp.": pax_total_tbl,
+        "Pass. Grat.": grat_tbl,
+        "Pass. Pag.": pagantes_tbl,
+        "% Grat. s/ Pag.": pct_grat_s_pag_tbl,
+        "IPK Total": ipk_total_l_tbl,
+        "IPK Pag.": ipk_pag_l_tbl,
+        "R$ Rec. p/ Veic. Conf.": rec_por_veic_tbl,
+        "R$ Rec. p/ Pass Tot.": rec_por_pax_tbl,
+        "R$ Rec. p/ Km rodado": rec_por_km_tbl,
+        "Pass. Tot. p/ Viagem": pax_tot_viag_tbl,
+        "Pass. Pag. p/ Viagem": pag_viag_tbl,
+        "R$ Receita Total": receita_tot_l_tbl,
+        "Tot. Viagens": viagens_total_tbl,
+        "Viagens p/ Veic": (viagens_total_tbl / veic_ids_uni_tbl.replace(0, np.nan)),
+    }).reset_index().rename(columns={"Nome Linha":"Nome Linha"})
+
+    # ===== Totalização =====
+    total_veic_cfg_sum   = veic_cfg_med_tbl.sum(skipna=True)
+    total_veic_ids_sum   = veic_ids_uni_tbl.sum(skipna=True)
+    total_km_sum         = km_rodado_tbl.sum(skipna=True)
+    total_pax_sum        = pax_total_tbl.sum(skipna=True)
+    total_grat_sum       = grat_tbl.sum(skipna=True)
+    total_pag_sum        = pagantes_tbl.sum(skipna=True)
+    total_viagens_sum    = viagens_total_tbl.sum(skipna=True)
+    total_receita_sum    = receita_tot_l_tbl.sum(skipna=True)
+
+    total_pct_grat_pag   = (total_grat_sum / total_pag_sum) if total_pag_sum else np.nan
+    total_ipk_total      = (total_pax_sum / total_km_sum) if total_km_sum else np.nan
+    total_ipk_pag        = (total_pag_sum / total_km_sum) if total_km_sum else np.nan
+    total_rec_por_veic   = (total_receita_sum / total_veic_cfg_sum) if total_veic_cfg_sum else np.nan
+    total_rec_por_pax    = (total_receita_sum / total_pax_sum) if total_pax_sum else np.nan
+    total_rec_por_km     = (total_receita_sum / total_km_sum) if total_km_sum else np.nan
+    total_pax_tot_viag   = (total_pax_sum / total_viagens_sum) if total_viagens_sum else np.nan
+    total_pag_viag       = (total_pag_sum / total_viagens_sum) if total_viagens_sum else np.nan
+    total_giro_veic      = (total_veic_ids_sum / total_veic_cfg_sum) if total_veic_cfg_sum else np.nan
+
+    total_row = pd.DataFrame([{
+        "Nome Linha": "TOTAL",
+        "Veículos Conf.": total_veic_cfg_sum,             # soma das médias por linha
+        "Veículos (IDs Distintos)": total_veic_ids_sum,   # soma por linha
+        "% Giro de Veículos": total_giro_veic,
+        "Km Rodada": total_km_sum,
+        "Pass. Transp.": total_pax_sum,
+        "Pass. Grat.": total_grat_sum,
+        "Pass. Pag.": total_pag_sum,
+        "% Grat. s/ Pag.": total_pct_grat_pag,
+        "IPK Total": total_ipk_total,
+        "IPK Pag.": total_ipk_pag,
+        "R$ Rec. p/ Veic. Conf.": total_rec_por_veic,
+        "R$ Rec. p/ Pass Tot.": total_rec_por_pax,
+        "R$ Rec. p/ Km rodado": total_rec_por_km,
+        "Pass. Tot. p/ Viagem": total_pax_tot_viag,
+        "Pass. Pag. p/ Viagem": total_pag_viag,
+        "R$ Receita Total": total_receita_sum,
+        "Tot. Viagens": total_viagens_sum,
+        "Viagens p/ Veic": (total_viagens_sum / total_veic_ids_sum) if total_veic_ids_sum else np.nan,
+    }])
+
+    tabela = tabela.sort_values(by="R$ Rec. p/ Km rodado", ascending=False, na_position="last")
+    tabela = pd.concat([tabela, total_row], ignore_index=True)
+
+    # ===== Cores =====
+    # Maior = pior (vermelho): solicitado
+    worse_when_high = [
+        "Veículos Conf.", "Veículos (IDs Distintos)",
+        "% Giro de Veículos", "Km Rodada", "Pass. Grat."
+    ]
+    # Menor = melhor (já solicitado para % Grat. s/ Pag.)
+    lower_is_better = ["% Grat. s/ Pag."]
+
+    # Maior = melhor (mantém padrão)
+    better_when_high = [
+        "Pass. Transp.", "Pass. Pag.", "IPK Total", "IPK Pag.",
+        "R$ Rec. p/ Veic. Conf.", "R$ Rec. p/ Pass Tot.", "R$ Rec. p/ Km rodado",
+        "Pass. Tot. p/ Viagem", "Pass. Pag. p/ Viagem"
+    , "R$ Receita Total", "Tot. Viagens", "Viagens p/ Veic"]
+
+    formatters = {
+        "Veículos Conf.": lambda v: fmt_float(v, 2),
+        "Veículos (IDs Distintos)": fmt_int,
+        "% Giro de Veículos": lambda v: fmt_pct(v, 1),
+        "Km Rodada": lambda v: fmt_float(v, 1),
+        "Pass. Transp.": fmt_int,
+        "Pass. Grat.": fmt_int,
+        "Pass. Pag.": fmt_int,
+        "% Grat. s/ Pag.": lambda v: fmt_pct(v, 1),
+        "IPK Total": lambda v: fmt_float(v, 3),
+        "IPK Pag.": lambda v: fmt_float(v, 3),
+        "R$ Rec. p/ Veic. Conf.": lambda v: fmt_currency(v, 2),
+        "R$ Rec. p/ Pass Tot.": lambda v: fmt_currency(v, 2),
+        "R$ Rec. p/ Km rodado": lambda v: fmt_currency(v, 2),
+        "Pass. Tot. p/ Viagem": lambda v: fmt_float(v, 2),
+        "Pass. Pag. p/ Viagem": lambda v: fmt_float(v, 2),
+        "R$ Receita Total": lambda v: fmt_currency(v, 2),
+        "Tot. Viagens": lambda v: fmt_int(v),
+        "Viagens p/ Veic": lambda v: fmt_float(v, 2),
+    }
+
+    try:
+        sty = tabela.style
+        # Colunas maior=pior (usar colormap invertido para ficar vermelho no alto)
+        cols_worse = [c for c in worse_when_high if c in tabela.columns]
+        if cols_worse:
+            sty = sty.background_gradient(cmap="RdYlGn_r", subset=cols_worse)
+        # Colunas menor=melhor (verde no baixo) -> usar RdYlGn_r também
+        cols_lower_better = [c for c in lower_is_better if c in tabela.columns]
+        if cols_lower_better:
+            sty = sty.background_gradient(cmap="RdYlGn_r", subset=cols_lower_better)
+        # Colunas maior=melhor
+        cols_better = [c for c in better_when_high if c in tabela.columns]
+        if cols_better:
+            sty = sty.background_gradient(cmap="RdYlGn", subset=cols_better)
+
+        sty = sty.format(formatters)
+        # Negrito na linha TOTAL
+        def bold_total(row):
+            return ['font-weight: bold' if row.get("Nome Linha") == "TOTAL" else '' for _ in row]
+        sty = sty.apply(bold_total, axis=1)
+        st.dataframe(sty, use_container_width=True)
+    except Exception:
+        # Fallback sem estilo, só com formatação
+        for col, fn in formatters.items():
+            if col in tabela.columns:
+                try:
+                    tabela[col] = tabela[col].apply(fn)
+                except Exception:
+                    pass
+        st.dataframe(tabela, use_container_width=True)
+else:
+    st.info("Não há coluna 'Nome Linha' nos dados para consolidar.")
+
+# ---------- Clusterização de linhas (K-Means) ----------
+if ai_cluster:
+    st.subheader("🧩 Clusterização de linhas (perfil operacional)")
+    if not _HAS_SKLEARN:
+        st.error("scikit-learn não encontrado. Instale com: `pip install scikit-learn`")
+    else:
+        base = df_filtered.copy()
+        if "Nome Linha" not in base.columns:
+            st.info("É necessário ter 'Nome Linha' para clusterização.")
+        else:
+            # Distância a usar
+            dcol = "Distancia_cfg_km" if ("Distancia_cfg_km" in base.columns and base["Distancia_cfg_km"].notna().any()) else ("Distancia" if "Distancia" in base.columns else None)
+            if dcol is None:
+                base["__km__"] = np.nan
+                dcol = "__km__"
+            # Totais por linha
+            grp = base.groupby("Nome Linha", observed=False)
+            total_pax = grp["Passageiros"].sum(numeric_only=True) if "Passageiros" in base.columns else pd.Series(0, index=grp.size().index)
+            total_km  = grp[dcol].sum(numeric_only=True)
+            viagens   = grp.size()
+            grat      = grp["Quant Gratuidade"].sum(numeric_only=True) if "Quant Gratuidade" in base.columns else pd.Series(0, index=grp.size().index)
+
+            paying_cols_all = ["Quant Inteiras","Quant Passagem","Quant Passe","Quant Vale Transporte"]
+            present_paying_c = [c for c in paying_cols_all if c in base.columns]
+            if present_paying_c:
+                pag_df = grp[present_paying_c].sum(numeric_only=True)
+                pag = pag_df.sum(axis=1)
+            else:
+                pag = pd.Series(0.0, index=grp.size().index)
+
+            receita = pag * (float(tarifa_usuario) + float(subsidio_pagante))
+
+            # Features
+            df_lin = pd.DataFrame({
+                "Nome Linha": total_pax.index,
+                "IPK_total": (total_pax / total_km.replace(0, np.nan)),
+                "Pct_grat_s_pag": (grat / pag.replace(0, np.nan)),
+                "Km_medio_viagem": (total_km / viagens.replace(0, np.nan)),
+                "Rec_por_km": (receita / total_km.replace(0, np.nan)),
+                "Veic_cfg_med": grp["Veiculos_cfg"].mean(numeric_only=True) if "Veiculos_cfg" in base.columns else 0.0,
+                "Viagens": viagens
+            }).replace([np.inf, -np.inf], np.nan)
+
+            df_feat = df_lin.drop(columns=["Nome Linha"]).copy()
+            df_feat = df_feat.fillna(df_feat.median(numeric_only=True))
+
+            try:
+                scaler = StandardScaler()
+                Xs = scaler.fit_transform(df_feat.values)
+                kmeans = KMeans(n_clusters=int(k_clusters), n_init=10, random_state=42)
+                labels = kmeans.fit_predict(Xs)
+                df_lin["Cluster"] = labels
+
+                # Nominar clusters por regras simples
+                def nome_cluster(row):
+                    ipk = row["IPK_total"]
+                    kmv = row["Km_medio_viagem"]
+                    rec_km = row["Rec_por_km"]
+                    if pd.isna(ipk) or pd.isna(kmv) or pd.isna(rec_km):
+                        return "Indefinido"
+                    if ipk >= df_lin["IPK_total"].median() and kmv <= df_lin["Km_medio_viagem"].median():
+                        return "Alta Demanda / Curta Distância"
+                    if ipk < df_lin["IPK_total"].median() and kmv > df_lin["Km_medio_viagem"].median():
+                        return "Baixa Demanda / Longa Distância"
+                    if rec_km >= df_lin["Rec_por_km"].median():
+                        return "Boa Receita por Km"
+                    return "Misto"
+                df_lin["Perfil"] = df_lin.apply(nome_cluster, axis=1)
+
+                # Visual
+                figc = px.scatter(
+                    df_lin,
+                    x="Km_medio_viagem", y="IPK_total",
+                    color="Cluster", hover_name="Nome Linha",
+                    size="Rec_por_km", title="Clusters de linhas (tamanho ~ Receita por Km)"
+                )
+                figc.update_layout(margin=dict(l=10,r=10,t=35,b=10), height=420)
+                st.plotly_chart(figc, use_container_width=True)
+
+                st.caption("Linhas por cluster (com métricas)")
+                show_cols = ["Nome Linha","Cluster","Perfil","IPK_total","Pct_grat_s_pag","Km_medio_viagem","Rec_por_km","Veic_cfg_med","Viagens"]
+                tbl = df_lin[show_cols].copy()
+                # Formatação PT-BR
+                tbl["IPK_total"] = tbl["IPK_total"].apply(lambda v: fmt_float(v,3))
+                tbl["Pct_grat_s_pag"] = tbl["Pct_grat_s_pag"].apply(lambda v: fmt_pct(v,1))
+                tbl["Km_medio_viagem"] = tbl["Km_medio_viagem"].apply(lambda v: fmt_float(v,1))
+                tbl["Rec_por_km"] = tbl["Rec_por_km"].apply(lambda v: fmt_currency(v,2))
+                tbl["Veic_cfg_med"] = tbl["Veic_cfg_med"].apply(lambda v: fmt_float(v,2))
+                tbl["Viagens"] = tbl["Viagens"].apply(fmt_int)
+                st.dataframe(tbl, use_container_width=True)
+
+            except Exception as e:
+                st.error(f"Falha na clusterização: {e}")
+
+# ===================================================================
+# ### 🚚 Aproveitamento da Frota (KPIs + por linha)
+# ===================================================================
+import pandas as _pd
+import numpy as _np
+try:
+    import streamlit as _st
+except Exception:
+    _st = None
+
+def _first_present(df, names):
+    for n in names:
+        if n in df.columns:
+            return n
+    return None
+
+def _to_dt(series):
+    return _pd.to_datetime(series, errors="coerce")
+
+
+def _calc_aproveitamento(df):
+    """
+    Calcula KPIs gerais e tabela por linha de aproveitamento da frota.
+    ATENÇÃO: KPIs agora são calculados em nível de SISTEMA por dia,
+    evitando médias de médias que distorcem valores.
+    Retorna (kpis_dict, tabela_por_linha DataFrame).
+    """
+    import pandas as _pd
+    import numpy as _np
+
+    if df is None or df.empty:
+        return {}, _pd.DataFrame()
+
+    col_linha = _first_present(df, ["Nome Linha","Linha"])
+    col_veic  = _first_present(df, ["Numero Veiculo","Nº Veiculo","Veiculo","Veículo"])
+    col_data  = _first_present(df, ["Data","Data Coleta","DataColeta"])
+    col_ini   = _first_present(df, ["Data Hora Inicio Operacao","Data Hora Início Operação","Inicio Operacao","Início Operação","Hora Inicio","DataHoraInicio"])
+    col_fim   = _first_present(df, ["Data Hora Final Operacao","Data Hora Final Operação","Fim Operacao","Hora Final","DataHoraFim"])
+
+    if any(c is None for c in [col_linha, col_veic, col_data, col_ini, col_fim]):
+        return {"erro":"Colunas de linha/veículo/horários ausentes"}, _pd.DataFrame()
+
+    dff = df.copy()
+    dff[col_data] = _to_dt(dff[col_data])
+    dff[col_ini]  = _to_dt(dff[col_ini])
+    dff[col_fim]  = _to_dt(dff[col_fim])
+    dff["_horas"] = ((dff[col_fim] - dff[col_ini]).dt.total_seconds() / 3600.0).fillna(0)
+
+    # ----- Séries diárias (nível sistema) -----
+    # Horas totais por dia (somando todas as viagens/veículos)
+    daily_hours = dff.groupby(col_data)["_horas"].sum(min_count=1)
+    dias_ativos = int(daily_hours.index.nunique())
+
+    # Veículos operando por dia (distintos)
+    daily_oper = dff.groupby(col_data)[col_veic].nunique()
+
+    # Veículos configurados por dia:
+    #  - Se houver coluna de config, somamos a config por linha ao dia e tiramos média entre dias
+    #  - Senão, aproximamos pela "capacidade" do sistema como soma do pico (máximo diário) por linha
+    veic_cfg_col = _first_present(dff, [c for c in dff.columns if "cfg" in c.lower() and "veic" in c.lower()] + ["Veiculos_cfg","Veículos_cfg"])
+
+    if veic_cfg_col:
+        daily_cfg = dff.groupby([col_data, col_linha])[veic_cfg_col].mean().groupby(level=0).sum(min_count=1)
+        veic_cfg_med = float(daily_cfg.mean()) if not daily_cfg.empty else 0.0
+    else:
+        per_line_daily = dff.groupby([col_linha, col_data])[col_veic].nunique()
+        per_line_peak  = per_line_daily.groupby(level=0).max()  # pico por linha no período
+        cfg_total_cap  = float(per_line_peak.sum()) if not per_line_peak.empty else 0.0
+        veic_cfg_med   = cfg_total_cap  # aproxima como capacidade estável
+        daily_cfg      = _pd.Series(cfg_total_cap, index=daily_hours.index) if dias_ativos else _pd.Series(dtype=float)
+
+    # KPIs em nível de sistema (médias por dia)
+    horas_totais     = float(daily_hours.sum())                         # total no período
+    horas_dia_media  = float(daily_hours.mean()) if dias_ativos else 0  # média diária
+    veic_med_op      = float(daily_oper.mean()) if dias_ativos else 0
+    horas_por_cfg    = (horas_dia_media / veic_cfg_med) if veic_cfg_med else 0.0
+    horas_por_oper   = (horas_dia_media / veic_med_op) if veic_med_op else 0.0
+    ratio_oper_cfg   = (veic_med_op / veic_cfg_med) if veic_cfg_med else 0.0
+    # Limita ratio em 120% para evitar outliers visuais por ruído de dados
+    ratio_oper_cfg   = float(min(ratio_oper_cfg, 1.2))
+
+    kpis = {
+        "horas_totais": horas_totais,
+        "dias_ativos": dias_ativos,
+        "veic_med_op": veic_med_op,
+        "veic_cfg_med": veic_cfg_med,
+        "horas_dia_media": horas_dia_media,
+        "horas_por_cfg": horas_por_cfg,
+        "horas_por_oper": horas_por_oper,
+        "ratio_oper_cfg": ratio_oper_cfg,
+    }
+
+    # ---- Tabela por linha (mantém lógica robusta) ----
+    grp = dff.groupby(col_linha, dropna=False)
+    horas_totais_l = grp["_horas"].sum().rename("Horas totais")
+    dias_ativos_l  = grp[col_data].nunique().rename("Dias ativos")
+
+    def _vm(g):
+        return g.groupby(col_data)[col_veic].nunique().mean()
+    veic_med_op_l = dff.groupby(col_linha).apply(_vm).rename("Veic. médios operação/dia")
+
+    if veic_cfg_col:
+        veic_cfg_med_l = dff.groupby([col_linha, col_data])[veic_cfg_col].mean().groupby(level=0).mean().rename("Veic. configurados (média)")
+    else:
+        veic_cfg_med_l = dff.groupby(col_linha).apply(lambda g: g.groupby(col_data)[col_veic].nunique().max()).rename("Veic. configurados (média)")
+
+    base = _pd.concat([horas_totais_l, dias_ativos_l, veic_med_op_l, veic_cfg_med_l], axis=1).reset_index()
+    base["Horas/dia (média)"] = base.apply(lambda r: (r["Horas totais"]/r["Dias ativos"]) if r["Dias ativos"] else 0, axis=1)
+    base["Horas/dia por veic. cfg"] = base.apply(lambda r: (r["Horas/dia (média)"]/r["Veic. configurados (média)"]) if r["Veic. configurados (média)"] else 0, axis=1)
+    base["Horas/dia por veic. oper. méd."] = base.apply(lambda r: (r["Horas/dia (média)"]/r["Veic. médios operação/dia"]) if r["Veic. médios operação/dia"] else 0, axis=1)
+    base["Operação vs Config (ratio)"] = base.apply(lambda r: (r["Veic. médios operação/dia"]/r["Veic. configurados (média)"]) if r["Veic. configurados (média)"] else 0, axis=1)
+
+    base = base.sort_values(["Operação vs Config (ratio)", "Horas/dia (média)"], ascending=False)
+    return kpis, base
+
+# ---- Renderização na UI ----
+try:
+    _base_df = df_filtered.copy() if 'df_filtered' in globals() else df.copy()
+
+    # Helpers de formatação
+    def _fmt_h(v, dec=1):
+        try:
+            return f"{v:,.{dec}f} h".replace(",", "X").replace(".", ",").replace("X", ".")
+        except Exception:
+            return "—"
+
+    def _fmt_hhmm(v):
+        try:
+            total_min = int(round(float(v) * 60))
+            hh, mm = divmod(total_min, 60)
+            return f"{hh:02d}:{mm:02d} h"
+        except Exception:
+            return "—"
+
+    def _fmt_pct(v):
+        try:
+            return f"{(float(v)*100):.1f}%"
+        except Exception:
+            return "—"
+
+    if _st: _st.markdown("## 🚚 Aproveitamento da Frota")
+    _kpis, _tbl = _calc_aproveitamento(_base_df)
+
+    if _kpis.get("erro") and _st:
+        _st.info("Não foi possível calcular: " + _kpis["erro"])
+    elif _st:
+        c1,c2,c3 = _st.columns(3)
+        c1.metric("⏱️ Horas totais", _fmt_h(_kpis['horas_totais'], 1), _fmt_hhmm(_kpis['horas_dia_media']))
+        c2.metric("🗓️ Dias ativos", f"{_kpis['dias_ativos']}")
+        c3.metric("🚌 Veic. médios oper./dia", f"{_kpis['veic_med_op']:.1f}")
+
+        c4,c5,c6 = _st.columns(3)
+        c4.metric("🚐 Veic. configurados (média)", f"{_kpis['veic_cfg_med']:.1f}")
+        c5.metric("⏳ Horas/dia por veic. cfg", f"{_kpis['horas_por_cfg']:.2f}")
+        # Badge de status para Operação vs Config
+        ratio = _kpis['ratio_oper_cfg']
+        badge = "🟢" if ratio >= 0.9 else ("🟡" if ratio >= 0.75 else "🔴")
+        c6.metric(f"{badge} Operação vs Config", _fmt_pct(ratio))
+
+        _st.caption("• Delta em 'Horas totais' mostra média diária (formato HH:MM). Cores: 🟢 ≥ 90%, 🟡 75–89%, 🔴 < 75%.")
+
+        _st.markdown("### Por linha")
+        tbl_show = _tbl.copy()
+        if not tbl_show.empty and "Operação vs Config (ratio)" in tbl_show.columns:
+            tbl_show["Operação vs Config (ratio)"] = (tbl_show["Operação vs Config (ratio)"].astype(float).clip(0,1.2))*100.0
+            tbl_show["Operação vs Config (ratio)"] = tbl_show["Operação vs Config (ratio)"].map(lambda v: f"{v:.1f}%")
+        # Formata horas
+        for col in ["Horas totais","Horas/dia (média)","Horas/dia por veic. cfg","Horas/dia por veic. oper. méd."]:
+            if col in tbl_show.columns:
+                tbl_show[col] = tbl_show[col].astype(float).map(lambda v: _fmt_h(v, 2))
+        _st.dataframe(tbl_show, use_container_width=True)
+
+except Exception as _e:
+    if _st: _st.warning(f"Falha ao renderizar 'Aproveitamento da Frota': {_e}")
 
 
 
