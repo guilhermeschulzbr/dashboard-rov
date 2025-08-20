@@ -2582,7 +2582,7 @@ def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocaç
         pick_veics = st.multiselect("Filtrar Veículos", veics, default=veics, key="aloc_filt_veic")
         default_linhas = [l for l in linhas if str(l) != 'Ocioso']
         pick_lin = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="ml_filt_lin")
-st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="aloc_filt_lin")
+        st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="aloc_filt_lin")
         segf = seg[(seg["Veículo"].isin(pick_veics)) & (seg["Linha"].astype(str).isin(pick_linhas))]
     if segf.empty:
         st.info("Os filtros atuais não retornaram segmentos.")
@@ -2815,7 +2815,7 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
         pick_mot = st.multiselect("Filtrar Motoristas", mot_list, default=mot_list, key="ml_filt_mot")
         default_linhas = [l for l in linhas if str(l) != 'Ocioso']
         pick_lin = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="ml_filt_lin")
-st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="ml_filt_lin")
+        st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="ml_filt_lin")
         segf = seg[(seg["Motorista"].isin(pick_mot)) & (seg["Linha"].astype(str).isin(pick_lin))]
     if segf.empty:
         st.info("Os filtros atuais não retornaram segmentos.")
