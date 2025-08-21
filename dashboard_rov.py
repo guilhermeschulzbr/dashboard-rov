@@ -2576,20 +2576,21 @@ def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocaç
     seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
 
     with st.expander("Filtros de exibição"):
-    # Normalizar tipos
-    seg["Veículo"] = seg["Veículo"].astype(str)
-    seg["Linha"] = seg["Linha"].astype(str)
+        # Normalizar tipos
+        seg["Veículo"] = seg["Veículo"].astype(str)
+        seg["Linha"] = seg["Linha"].astype(str)
 
-    veics = sorted(seg["Veículo"].unique().tolist())
-    linhas = sorted(seg["Linha"].unique().tolist())
+        veics = sorted(seg["Veículo"].unique().tolist())
+        linhas = sorted(seg["Linha"].unique().tolist())
 
-    # Excluir 'Ocioso' dos defaults
-    default_veics = [v for v in veics if v != "Ocioso"]
-    default_linhas = [l for l in linhas if l != "Ocioso"]
+        # Excluir 'Ocioso' dos defaults
+        default_veics = [v for v in veics if v != "Ocioso"]
+        default_linhas = [l for l in linhas if l != "Ocioso"]
 
-    # Filtros com chaves exclusivas
-    pick_veics = st.multiselect("Filtrar Veículos (inclui 'Ocioso')", veics, default=default_veics, key="aloc_filt_vei")
-    pick_linhas = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="aloc_filt_lin")
+        # Filtros com chaves exclusivas
+        pick_veics = st.multiselect("Filtrar Veículos (inclui 'Ocioso')", veics, default=default_veics, key="aloc_filt_vei")
+        pick_linhas = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="aloc_filt_lin")
+
 
         segf = seg[(seg["Veículo"].isin(pick_veics)) & (seg["Linha"].astype(str).isin(pick_linhas))]
     if segf.empty:
@@ -2818,13 +2819,14 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
         else:
             mot_label_map[_mot] = f"{_mot} — {_fmt_hhmm(_mins)}"
     with st.expander("Filtros — Motoristas × Linhas"):
-    mot_list = sorted(seg["Motorista"].astype(str).unique().tolist())
-    linhas = sorted(seg["Linha"].astype(str).unique().tolist())
+        mot_list = sorted(seg["Motorista"].astype(str).unique().tolist())
+        linhas = sorted(seg["Linha"].astype(str).unique().tolist())
 
-    default_linhas = [l for l in linhas if l != "Ocioso"]
+        default_linhas = [l for l in linhas if l != "Ocioso"]
 
-    pick_mot = st.multiselect("Filtrar Motoristas", mot_list, default=mot_list, key="mxl_filt_mot")
-    pick_lin = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="mxl_filt_lin")
+        pick_mot = st.multiselect("Filtrar Motoristas", mot_list, default=mot_list, key="mxl_filt_mot")
+        pick_lin = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="mxl_filt_lin")
+
 
         segf = seg[(seg["Motorista"].isin(pick_mot)) & (seg["Linha"].astype(str).isin(pick_lin))]
     if segf.empty:
