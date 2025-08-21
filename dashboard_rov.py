@@ -2593,7 +2593,7 @@ def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocaç
         
         
         segf = seg[(seg["Veículo"].isin(pick_veics)) & (seg["Linha"].astype(str).isin(pick_linhas))]
-    if segf.empty:
+    if segf is None or getattr(segf, "empty", True):
         st.info("Os filtros atuais não retornaram segmentos.")
         return
     # === Indicadores (Veículo × Linha) ===
@@ -2829,7 +2829,7 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
         
         
         segf = seg[(seg["Motorista"].isin(pick_mot)) & (seg["Linha"].astype(str).isin(pick_lin))]
-    if segf.empty:
+    if segf is None or getattr(segf, "empty", True):
         st.info("Os filtros atuais não retornaram segmentos.")
         return
 
@@ -3083,7 +3083,7 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
         pick_mot = st.multiselect("Filtrar Motoristas", mot_list, default=mot_list, key="mxv_filt_mot")
         default_veics = [v for v in veics if str(v) != 'Ocioso']
         pick_veics = st.multiselect("Filtrar Veículos (inclui 'Ocioso')", veics, default=default_veics, key="mxv_filt_vei")
-    if segf.empty:
+    if segf is None or getattr(segf, "empty", True):
         st.info("Os filtros atuais não retornaram segmentos.")
         return
 
