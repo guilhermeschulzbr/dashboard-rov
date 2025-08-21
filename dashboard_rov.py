@@ -2576,11 +2576,13 @@ def show_linha_do_tempo_alocacao_1dia(df, titulo="📆 Linha do tempo de alocaç
     seg["Duração (min)"] = (seg["Fim"] - seg["Início"]).dt.total_seconds()/60.0
 
     with st.expander("Filtros de exibição"):
-        seg["Veículo"] = seg["Veículo"].astype(str)
+seg["Veículo"] = seg["Veículo"].astype(str)
         veics = sorted(seg["Veículo"].unique().tolist())
+        default_veics = [v for v in veics if str(v) != 'Ocioso']
         linhas = sorted(seg["Linha"].astype(str).unique().tolist())
         pick_veics = st.multiselect("Filtrar Veículos", veics, default=veics, key="aloc_filt_veic")
         default_linhas = [l for l in linhas if str(l) != 'Ocioso']
+        pick_linhas = st.multiselect(\"Filtrar Linhas (inclui 'Ocioso')\", linhas, default=default_linhas, key=\"aloc_filt_lin\")
         pick_lin = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="ml_filt_lin")
         st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="aloc_filt_lin")
         segf = seg[(seg["Veículo"].isin(pick_veics)) & (seg["Linha"].astype(str).isin(pick_linhas))]
@@ -2810,12 +2812,12 @@ def show_linha_do_tempo_motoristas_linhas_1dia(df, titulo="📆 Linha do tempo: 
         else:
             mot_label_map[_mot] = f"{_mot} — {_fmt_hhmm(_mins)}"
     with st.expander("Filtros — Motoristas × Linhas"):
-        mot_list = sorted(seg["Motorista"].astype(str).unique().tolist())
+mot_list = sorted(seg["Motorista"].astype(str).unique().tolist())
         linhas = sorted(seg["Linha"].astype(str).unique().tolist())
-        pick_mot = st.multiselect("Filtrar Motoristas", mot_list, default=mot_list, key="ml_filt_mot")
+        pick_mot = st.multiselect("Filtrar Motoristas", mot_list, default=mot_list, key="mxl_filt_mot")
         default_linhas = [l for l in linhas if str(l) != 'Ocioso']
-        pick_lin = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="ml_filt_lin")
-        st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="ml_filt_lin")
+        pick_lin = st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="mxl_filt_lin")
+        st.multiselect("Filtrar Linhas (inclui 'Ocioso')", linhas, default=default_linhas, key="mxl_filt_lin")
         segf = seg[(seg["Motorista"].isin(pick_mot)) & (seg["Linha"].astype(str).isin(pick_lin))]
     if segf.empty:
         st.info("Os filtros atuais não retornaram segmentos.")
@@ -3063,7 +3065,9 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
             mot_label_map[_mot] = f"⚡ <b>{_mot} — {_fmt_hhmm(_mins)} (HE {_fmt_hhmm(_extra)})</b>"
         else:
             mot_label_map[_mot] = f"{_mot} — {_fmt_hhmm(_mins)}"
-    with st.expander("Filtros — Motoristas × Veículos"):
+    
+        segf = None
+with st.expander("Filtros — Motoristas × Veículos"):
         mot_list = sorted(seg["Motorista"].astype(str).unique().tolist())
         veics = sorted(seg["Veículo"].astype(str).unique().tolist())
         pick_mot = st.multiselect("Filtrar Motoristas", mot_list, default=mot_list, key="mv_filt_mot")
