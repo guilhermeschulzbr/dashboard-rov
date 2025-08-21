@@ -3063,7 +3063,7 @@ def show_linha_do_tempo_motoristas_veiculos_1dia(df, titulo="📆 Linha do tempo
         mot_list = sorted(seg["Motorista"].astype(str).unique().tolist())
         veics = sorted(seg["Veículo"].astype(str).unique().tolist())
         pick_mot = st.multiselect("Filtrar Motoristas", mot_list, default=mot_list, key="mxv_filt_mot_a")
-        segf = seg[(seg["Motorista"].isin(pick_mot)) & (seg["Veículo"].astype(str).isin(pick_vei))]
+        segf = seg[(seg["Motorista"].isin(pick_mot)) & (seg["Veículo"].astype(str).isin(pick_veics))]
     if segf.empty:
         st.info("Os filtros atuais não retornaram segmentos.")
         return
